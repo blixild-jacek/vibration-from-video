@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.DS_Store
+printer-bed-v1/
+*.zip
+*.part
+*.mraw
+*.cih
+*.hdf5
+*.mp4
+*.mov
+*_first_frame.png
+swing.png
+frf.png
+venv/
+.venv/
