@@ -52,10 +52,10 @@ def read_video(video):
     return cap.get(cv2.CAP_PROP_FPS), frames()
 
 
-def grid_image(first, path, step=50):
-    """Save the first frame with a labelled pixel grid, to read the two points' coordinates from."""
-    img = cv2.cvtColor(first, cv2.COLOR_GRAY2BGR)
-    h, w = first.shape
+def draw_grid(gray, step=50):
+    """A greyscale frame as a colour image with a pixel grid every step pixels, labelled every second line."""
+    img = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    h, w = gray.shape
     for x in range(0, w, step):
         cv2.line(img, (x, 0), (x, h - 1), (0, 140, 255), 1)
         if x % (2 * step) == 0:
@@ -64,7 +64,13 @@ def grid_image(first, path, step=50):
         cv2.line(img, (0, y), (w - 1, y), (0, 140, 255), 1)
         if y % (2 * step) == 0 and y:
             cv2.putText(img, str(y), (2, y - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 140, 255), 1)
-    ok, png = cv2.imencode(".png", img)  # written by Python, so any file name works (cv2.imwrite fails on some)
+    return img
+
+
+def grid_image(first, path, step=50):
+    """Save the first frame with a labelled pixel grid, to read the two points' coordinates from."""
+    # written by Python, so any file name works (cv2.imwrite fails on some)
+    ok, png = cv2.imencode(".png", draw_grid(first, step))
     try:
         if not ok:
             raise OSError("cannot encode the image")

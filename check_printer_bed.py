@@ -171,28 +171,36 @@ def one_curve(H, band):
     return u[:, 0].conj() @ H
 
 
-def mode_fit(f, H, band):
+def resonance_model(p, w):
+    """mode_fit's model at angular frequencies w (rad/s): one resonance plus a constant and a 1/w^2 term, from its
+    parameters (natural frequency in rad/s, damping ratio, then the real and imaginary parts of A, C and D)."""
+    wn, z, ar, ai, cr, ci, dr, di = p
+    return (ar + 1j * ai) / (wn ** 2 - w ** 2 + 2j * z * wn * w) + (cr + 1j * ci) + (dr + 1j * di) / w ** 2
+
+
+def mode_fit(f, H, band, params=False):
     """Natural frequency (Hz), damping ratio, relative misfit of one resonance fitted in a band, and whether the fit
     stopped at a limit (a damping ratio of 0.0001 or 0.2, or a frequency at the band's edge), which makes it doubtful.
     H is displacement per force: the constant stands for the resonances above the band and the 1/w^2 term for those
-    below it, which holds for displacement and not for acceleration (where the two change places with w^2)."""
+    below it, which holds for displacement and not for acceleration (where the two change places with w^2).
+    With params=True, the fitted parameters for resonance_model() come last."""
     w, y = 2 * np.pi * f[band], H[band]
     k = np.argmax(np.abs(y))
     scale = np.abs(y).max()
 
-    def model(p):
-        wn, z, ar, ai, cr, ci, dr, di = p
-        return (ar + 1j * ai) / (wn ** 2 - w ** 2 + 2j * z * wn * w) + (cr + 1j * ci) + (dr + 1j * di) / w ** 2
+    def misfits(p):
+        r = (resonance_model(p, w) - y) / scale
+        return np.concatenate([r.real, r.imag])
 
     a0 = y[k] * 2j * 0.01 * w[k] ** 2
-    sol = least_squares(lambda p: np.concatenate([((model(p) - y) / scale).real, ((model(p) - y) / scale).imag]),
-                        [w[k], 0.01, a0.real, a0.imag, 0, 0, 0, 0],
+    sol = least_squares(misfits, [w[k], 0.01, a0.real, a0.imag, 0, 0, 0, 0],
                         bounds=([w[0], 1e-4] + [-np.inf] * 6, [w[-1], 0.2] + [np.inf] * 6))
-    misfit = np.sqrt(np.mean(np.abs(model(sol.x) - y) ** 2)) / scale
+    misfit = np.sqrt(np.mean(np.abs(resonance_model(sol.x, w) - y) ** 2)) / scale
     wn, z = sol.x[:2]
     edge = 0.01 * (w[-1] - w[0])  # the solver stops just inside a limit, not on it
     at_limit = z > 0.98 * 0.2 or z < 1.5e-4 or wn - w[0] < edge or w[-1] - wn < edge
-    return wn / 2 / np.pi, z, misfit, bool(at_limit)
+    result = (wn / 2 / np.pi, z, misfit, bool(at_limit))
+    return result + (sol.x,) if params else result
 
 
 def impulse_response(f, H, lo, hi, fps, n=None):

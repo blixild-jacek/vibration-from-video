@@ -4,7 +4,8 @@ Reads a part's natural frequency and damping ratio from a video of it, with no s
 film it ringing down, or shake it with a shaker and a force sensor while a fast camera films it, and these scripts
 follow the motion in the film and read both numbers.
 
-It is an example to adapt, written up on the [Blixild blog](https://blixild.com/blog.html).
+It is an example to adapt, written up on the Blixild blog in
+[How to measure damping ratio and natural frequency on video](https://blixild.com/measure-damping-ratio-natural-frequency-video.html).
 
 ## What is in it
 

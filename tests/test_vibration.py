@@ -122,6 +122,15 @@ class Readings(unittest.TestCase):
         self.assertLess(misfit, 0.01)
         self.assertFalse(at_limit)
 
+    def test_the_fit_returns_its_model(self):
+        f = np.arange(0.5, 500.5, 0.5)
+        band = (f >= 60) & (f <= 95)
+        H = resonance(f, 76.0, 0.02)
+        fn, zeta, misfit, _, p = check_printer_bed.mode_fit(f, H, band, params=True)
+        model = check_printer_bed.resonance_model(p, 2 * np.pi * f[band])
+        self.assertLess(np.abs(model - H[band]).max() / np.abs(H[band]).max(), 0.01)
+        self.assertAlmostEqual(p[0] / (2 * np.pi), fn)
+
     def test_a_fit_at_its_limit_is_flagged(self):
         f = np.arange(0.5, 500.5, 0.5)
         band = (f >= 118) & (f <= 140)
