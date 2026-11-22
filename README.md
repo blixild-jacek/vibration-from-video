@@ -56,7 +56,7 @@ You need Python 3.11 or newer. On Windows, type `python` or `py` where these ste
    python3 free_decay.py test_clip.mp4 --part 424 280 --fixed 104 84 --fps 60
    ```
 
-   It should report a natural frequency of 2.000 Hz and a damping ratio of about 0.030 (0.0302 on our run), against
+   It should report a natural frequency of 2.000 Hz and a damping ratio of about 0.030 (0.0301 on our run), against
    the 2 Hz and 0.03 the film was made with.
 
 3. Run the shaker test on the printer-bed films. The first run downloads about 450 MB from Zenodo and needs about
