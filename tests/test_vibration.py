@@ -25,6 +25,7 @@ sys.path.insert(0, str(HERE))
 import check_printer_bed  # noqa: E402
 import free_decay  # noqa: E402
 import make_test_clip  # noqa: E402
+import speed_test  # noqa: E402
 
 
 def ring(fn, zeta, fps, seconds, amplitude=10.0, noise=0.0, seed=0):
@@ -70,8 +71,17 @@ class Readings(unittest.TestCase):
             self.assertAlmostEqual(found, zeta, delta=zeta * 0.02)
 
     def test_too_few_peaks_is_a_value_error(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as caught:
             free_decay.damping(ring(2.0, 0.3, 60, 5, amplitude=2.0), 60, 2.0, floor=1.0)
+        self.assertEqual(caught.exception.args[0].code, "few-peaks")  # a page words it by its code
+
+    def test_a_warning_carries_its_code_and_values(self):
+        *_, warnings = free_decay.measure(ring(2.0, 0.02, 60, 3), 60, floor=1.0)  # cut before rest
+        note = next(w for w in warnings if w.code == "still-swinging")
+        self.assertTrue(note.startswith("the part still swings"))  # printed as before
+        *_, warnings = free_decay.measure(ring(12.0, 0.02, 60, 8), 60, floor=1.0)
+        note = next(w for w in warnings if w.code == "few-frames")
+        self.assertAlmostEqual(note.values["per_swing"], 5, delta=0.01)
 
     def test_a_long_quiet_tail_does_not_hide_the_frequency(self):
         # 40 Hz at 240 fps, filmed for 5 s: the ringing is over in 0.3 s; the rest is noise
@@ -167,6 +177,48 @@ class Readings(unittest.TestCase):
         self.assertEqual(H[0], 0)
 
 
+class SpeedTest(unittest.TestCase):
+    FPS = 240
+
+    def read(self, swing, seconds, floor=1.0):
+        t = np.arange(int(seconds * self.FPS)) / self.FPS
+        x = swing(t) + np.random.default_rng(0).normal(0, 0.05, len(t))
+        return speed_test.resonance(*speed_test.response(x, self.FPS, floor)[1:], self.FPS)
+
+    def test_a_coast_down_finds_the_resonance_within_two_percent(self):
+        for zeta in (0.01, 0.02, 0.05):
+            for seconds in (10, 40):
+                peak, size, notes = self.read(make_test_clip.coast_down(12.0, zeta, 40.0, 20.0, 6.0, seconds), seconds)
+                self.assertLess(abs(peak - 12.0) / 12.0, 0.02, (zeta, seconds, peak))
+                self.assertLess(peak, 12.0)  # a coast-down passes the peak before the part has fully answered
+                self.assertEqual(notes, [])
+
+    def test_speed_steps_find_the_step_nearest_the_resonance(self):
+        speeds = [9, 10, 11, 11.5, 12, 12.5, 13, 14, 15]
+        peak, size, notes = self.read(make_test_clip.driven(12.0, 0.02, 40.0, make_test_clip.steps(speeds, 18), 18), 18)
+        self.assertLess(abs(peak - 12.0), 0.25)
+
+    def test_a_resonance_at_few_frames_per_swing_reads_in_full(self):
+        peak, size, notes = self.read(make_test_clip.coast_down(80.0, 0.02, 40.0, 128.0, 40.0, 20), 20)
+        self.assertLess(abs(peak - 80.0) / 80.0, 0.02)  # 3 frames per swing at 240 frames a second
+        self.assertAlmostEqual(size, 40.0, delta=0.5)
+        self.assertEqual(notes, [])
+
+    def test_a_resonance_near_half_the_frame_rate_is_warned_about(self):
+        peak, size, notes = self.read(make_test_clip.coast_down(105.0, 0.02, 40.0, 115.0, 60.0, 20), 20)
+        self.assertEqual([n.code for n in notes], ["near-half"])
+
+    def test_a_resonance_beyond_the_speeds_filmed_is_warned_about(self):
+        peak, size, notes = self.read(make_test_clip.coast_down(25.0, 0.02, 40.0, 20.0, 6.0, 20), 20)
+        self.assertEqual([n.code for n in notes], ["edge-peak"])
+        self.assertEqual(notes[0].values["side"], "highest")
+
+    def test_a_swing_below_the_floor_is_not_read(self):
+        with self.assertRaises(ValueError) as caught:
+            self.read(make_test_clip.coast_down(12.0, 0.02, 0.5, 20.0, 6.0, 10), 10)
+        self.assertEqual(caught.exception.args[0].code, "below-floor")
+
+
 class Films(unittest.TestCase):
     def test_tracker_reads_a_generated_film(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -179,6 +231,33 @@ class Films(unittest.TestCase):
             fd, fn, zeta, _, _, _ = free_decay.measure(x, 60, floor=1.0)
             self.assertAlmostEqual(fn, 2.0, delta=0.01)
             self.assertAlmostEqual(zeta, 0.03, delta=0.002)
+
+    def test_frames_handed_one_at_a_time_read_as_the_whole_film(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "clip.mp4")
+            make_test_clip.make(out, fn=2.0, zeta=0.03, fps=60, seconds=8)
+            frames = list(free_decay.read_video(out)[1])
+            points = [make_test_clip.first_tip(40.0), make_test_clip.FIXED]
+            whole = free_decay.track(frames, points)
+            tracker = free_decay.Tracker(frames[0], points)
+            for gray in frames[1:]:
+                tracker.step(gray)
+            for a, b in zip(whole, tracker.shifts()):
+                np.testing.assert_array_equal(a, b)
+            x, noise, floor, (fd, fn, zeta, _, peaks, warnings) = free_decay.read(*whole, 60)
+            self.assertEqual(floor, 1.0)
+            self.assertAlmostEqual(fn, 2.0, delta=0.01)
+            self.assertAlmostEqual(zeta, 0.03, delta=0.002)
+
+    def test_the_speed_test_reads_a_coast_down_film(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "coast.mp4")
+            make_test_clip.make(out, fn=12.0, zeta=0.02, fps=240, seconds=10, coast=(20.0, 6.0))
+            fps, frames = free_decay.read_video(out)
+            part, fixed = free_decay.track(frames, [make_test_clip.TIP, make_test_clip.FIXED])
+            x, noise, floor, windows, (peak, size, notes) = speed_test.read(part, fixed, fps)
+            self.assertLess(abs(peak - 12.0) / 12.0, 0.02)
+            self.assertGreater(size, 30)
 
     def test_a_blank_frame_leaves_a_gap_not_an_offset(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -238,8 +317,9 @@ class Films(unittest.TestCase):
     def test_plain_grey_has_too_little_texture(self):
         grey = [np.clip(128 + np.random.default_rng(k).normal(0, 2, (120, 160)), 0, 255).astype(np.uint8)
                 for k in range(3)]
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit) as caught:
             free_decay.track(grey, [(80, 60)])
+        self.assertEqual(caught.exception.args[0].code, "texture")
 
     def test_a_ring_down_that_grows_is_not_read(self):
         f = np.fft.rfftfreq(2000, 1 / 1000)

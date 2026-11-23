@@ -2,7 +2,8 @@
 
 Reads a part's natural frequency and damping ratio from a video of it, with no sensor on the part. Tap the part and
 film it ringing down, or shake it with a shaker and a force sensor while a fast camera films it, and these scripts
-follow the motion in the film and read both numbers.
+follow the motion in the film and read both numbers. Or film the part while its machine runs through its speeds, and
+read the speed at which it shakes most.
 
 It is an example to adapt, written up on the Blixild blog in
 [How to measure damping ratio and natural frequency on video](https://blixild.com/measure-damping-ratio-natural-frequency-video.html).
@@ -10,11 +11,13 @@ It is an example to adapt, written up on the Blixild blog in
 ## What is in it
 
 - `free_decay.py`: the tap test. It reads a film of a part ringing after a tap.
+- `speed_test.py`: the speed test. It reads a film of a part while its machine is stepped through its speeds or
+  coasts down, and finds the speed at which the part shakes most.
 - `check_printer_bed.py`: the shaker test, on open high-speed films of a shaken plate with the force and the
   acceleration measured where the shaker pushes ([printer-bed dataset](https://doi.org/10.5281/zenodo.21476609),
   CC BY 4.0). It downloads the data itself.
-- `make_test_clip.py`: makes a test film with a natural frequency and damping ratio you choose, to check the
-  arithmetic.
+- `make_test_clip.py`: makes a test film with a natural frequency and damping ratio you choose, ringing after a tap
+  or shaken by a machine coasting down or stepped through speeds, to check the arithmetic.
 - `tests/`: unit tests.
 
 ## How it works
@@ -38,7 +41,16 @@ reads a film. The script does both for the camera and for the accelerometer, who
 displacement (divided by −ω², with ω = 2πf), since the fitted model's two extra terms for the neighbouring
 resonances hold for displacement per force.
 
-Neither needs millimetres: the frequency comes from time and the damping from a ratio of swings.
+**The speed test.** The machine shakes the part at the speed it runs. The part and a still point are followed as in
+the tap test, and the swing is cut into windows six cycles long, a quarter of a window apart. In each window the
+strongest frequency is what the part moves at, the running speed when it is shaken once a revolution, and its
+amplitude is how far the part swings at that frequency. The window with the largest swing above the noise gives the
+resonance the machine excites. A coast-down passes that peak before the part has fully answered, so it reads a little
+low: by 0.1 to 1.8 % on generated coast-downs from 20 to 6 Hz lasting 10 to 80 s, through a 12 Hz resonance with
+damping ratios of 0.01 to 0.05. The speed test gives no damping ratio: on the same films the width of the peak read
+it 3 to 29 % high or not at all. Tap the part for the damping ratio.
+
+None of them needs millimetres: the frequency comes from time and the damping from a ratio of swings.
 
 ## Try it
 
@@ -60,6 +72,16 @@ You need Python 3.11 or newer. On Windows, type `python` or `py` where these ste
    It should report a natural frequency of 2.000 Hz and a damping ratio of about 0.030 (0.0301 on our run), against
    the 2 Hz and 0.03 the film was made with.
 
+   A coast-down from 18 to 7 Hz through a 12 Hz resonance, read by the speed test:
+
+   ```bash
+   python3 make_test_clip.py coast_clip.mp4 --fn 12 --zeta 0.02 --fps 240 --seconds 12 --coast-down 18 7
+   python3 speed_test.py coast_clip.mp4 --part 424 240 --fixed 104 84 --fps 240 --plot response.png
+   ```
+
+   It should report the largest swing at about 11.8 Hz (11.836 Hz on our run, an Apple M3, 23 November 2026), against
+   the 12 Hz resonance the film was made with.
+
 3. Run the shaker test on the printer-bed films. The first run downloads about 450 MB from Zenodo and needs about
    1 GB of disk once unpacked:
 
@@ -78,8 +100,9 @@ Tests: `python3 -m unittest discover tests`.
    than half the frame rate shows up at a false, lower frequency with no warning: film it at two frame rates, and a
    true frequency stays put while a false one moves.
 2. Film the part from the side, so that it swings across the picture, with something that does not move in the same
-   view. Film close enough that the swing after a tap spans a pixel or more, and fast enough for at least six frames
-   per swing: 240 frames a second covers up to about 40 Hz.
+   view. Film close enough that the swing after a tap spans a pixel or more. For the damping ratio, film fast enough
+   for at least six frames per swing: 240 frames a second covers up to about 40 Hz. The natural frequency alone, and
+   the speed test, need a little over two frames per swing: up to about 100 Hz at 240 frames a second.
 3. Tap the part and keep filming until it stops. Use the original slow-motion recording, not an edited or shared
    copy: an exported slow-motion file often plays its start and end at normal speed, so one frame rate cannot time
    it all. If the ring-down lies in one stretch of the file, `--start` and `--end` (seconds on the file's own clock)
@@ -125,8 +148,10 @@ NumPy 1.26 and SciPy 1.17 from conda, and Python 3.15 with OpenCV 5.1, NumPy 2.5
 requirements.txt:
 
 - **Test films** made by `make_test_clip.py`, 1 to 200 Hz: the frequency within 0.05 % and the damping ratio within
-  2 % of the values set, with six or more frames per swing. At 3.75 frames per swing the tap test stopped, and at 2.5
-  it read the damping 10 % low.
+  2 % of the values set, with six or more frames per swing. With fewer, the frequency still held (within 0.014 %
+  down to 2.4 frames per swing, 100 Hz at 240 frames a second) but the damping ratio depended on how the frames fell
+  on the swings: within 1 % on films at 240 frames a second, 4 % and 12.5 % low on two films at 30 frames a second,
+  where the script warns. The speed test read 50 and 80 Hz at 240 frames a second within 0.6 %, the swing in full.
 - **The printer-bed films**: the camera's resonances at 76, 126, 215 and 264 Hz within about 0.3 % of the
   accelerometer's, and their damping ratios within 7 % when both are read by the same fit. At about 110 Hz the camera
   reads 109 Hz and the accelerometer 112 Hz: there the accelerometer, where the shaker pushes, shows only a faint
@@ -136,16 +161,18 @@ requirements.txt:
 
 ## What it does not do
 
-- **Running machines.** A part on a running machine moves micrometres: at 50 Hz, 1 mm/s is a swing of about
-  3 micrometres, a few hundredths of a pixel, with no force recorded to divide by. That stays with an accelerometer.
+- **Running machines at normal levels.** A part on a running machine moves micrometres: at 50 Hz, 1 mm/s is a swing
+  of about 3 micrometres, a few hundredths of a pixel, with no force recorded to divide by. That stays with an
+  accelerometer. The speed test reads a running machine only where the part shakes a pixel or more at some speed,
+  which is near a resonance.
 - **Motion towards the camera.** One camera sees only motion across the picture. Millimetres, and motion along the
   line of sight, need a second camera.
 - **Two resonances close together.** The decrement assumes one resonance. Where two share a band, it follows the one
   that dies away slowest: in one of the printer-bed films the ring-down read almost no damping at 126 and 215 Hz,
   where the fit read 0.013 and 0.021. The script warns when the peaks' logarithms do not lie on a straight line.
 - **Every surface.** The tracker needs texture, such as corners, bolts or a sticker. Plain or shiny surfaces, glare,
-  motion blur and flickering light are not covered by the tests, and the tap test has not yet read a filmed tap of a
-  real part.
+  motion blur and flickering light are not covered by the tests, and neither the tap test nor the speed test has yet
+  read a film of a real part.
 - **The brightness reading** is a quick first look: on the printer bed it read 221 Hz for the resonance at 215 Hz,
   and at 264 Hz it found the frequency but read the damping 30 to 40 % low.
 
