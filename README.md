@@ -205,7 +205,9 @@ requirements.txt:
   struck with a hammer in the CAMELOT benchmark (Politecnico di Torino, https://doi.org/10.5281/zenodo.15119038,
   CC BY 4.0), with accelerometers on the frame. It moved under a pixel, so no damping ratio. Read up to 32 s, before
   someone walks past the still point, four videos gave the frequency alone within 0.3-1.7 % of the accelerometer over
-  the same seconds, their ring 39-63 times the noise; the other two, at 3.3 and 1.8 times, were declined. The speed
+  the same seconds, their ring 39-63 times the noise; the other two, at 3.3 and 1.8 times, were declined. Four more videos of the same frame, unopened until the rule
+  was frozen and the predictions written, all gave the frequency alone within 1.2 % of the accelerometer over the
+  same seconds, compared as displacement. The speed
   test has not yet read a video of a real machine.
 - **The brightness reading** is a quick first look: on the printer bed it read 221 Hz for the resonance at 215 Hz,
   and at 264 Hz it found the frequency but read the damping 30 to 40 % low.
