@@ -2,4 +2,4 @@ opencv-python>=5.0
 numpy>=1.26
 scipy>=1.17
 h5py>=3.16
-matplotlib>=3.11
+matplotlib>=3.10

@@ -45,7 +45,6 @@ from pathlib import Path
 import sys
 
 import cv2
-import h5py
 import numpy as np
 from scipy.optimize import least_squares
 
@@ -64,6 +63,9 @@ BANDS = [(70, 85), (100, 118), (118, 140), (195, 240), (250, 285)]
 # on the plate (view 0's bottom edge runs from y 312 at x 80 to y 372 at x 345; view 1's right edge is at x 348)
 GRIDS = {0: (80, 310, 60, 280), 1: (70, 315, 70, 295)}
 
+
+
+MARK = ".unpacked-by-check_printer_bed"  # in each folder --download unpacks: the only folders it may replace
 
 def md5(path):
     digest = hashlib.md5()
@@ -129,10 +131,15 @@ def download(folder, archives=ARCHIVES, record=RECORD, needed=NEEDED):
             z.extractall(tmp)  # zipfile keeps every file inside tmp; moved into place only once whole
             for item in Path(tmp).iterdir():
                 target = folder / item.name
+                if target.exists() and not (target / MARK).exists():  # not unpacked here: someone's own files
+                    raise SystemExit(f"{target} is in the way and was not unpacked by --download: move it, or give "
+                                     "the dataset another folder")
                 if target.is_dir():
                     shutil.rmtree(target)
                 elif target.exists():
                     target.unlink()
+                if item.is_dir():
+                    (item / MARK).write_text("unpacked by check_printer_bed.py --download; replaced on the next one\n")
                 item.replace(target)
         print(f"unpacked {name}")
 
@@ -158,6 +165,7 @@ def read_mraw(folder):
 
 def read_signals(path):
     """Force (N), acceleration (m/s^2) and their sample rate (Hz)."""
+    import h5py  # only here: the rest of the script, and the tap and speed tests, need no HDF5
     with h5py.File(path, "r") as f:
         g = f["InputTask"]
         names = [x.decode() if isinstance(x, bytes) else x for x in g["channel_names"][()]]

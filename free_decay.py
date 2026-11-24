@@ -49,22 +49,49 @@ class Note(str):
         return note
 
 
+class Frames:
+    """A video's frames, one greyscale image at a time, and the time of each frame read so far (ms, as OpenCV gives
+    it), to tell a film saved at a variable frame rate (uneven())."""
+
+    def __init__(self, cap):
+        self.cap, self.times = cap, []
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        ok, frame = self.cap.read() if self.cap.isOpened() else (False, None)
+        if not ok:
+            self.cap.release()
+            raise StopIteration
+        self.times.append(self.cap.get(cv2.CAP_PROP_POS_MSEC))
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+
+
 def read_video(video):
-    """The frame rate a video file stores and its frames, one greyscale image at a time."""
+    """The frame rate a video file stores and its frames (Frames), one greyscale image at a time."""
     cap = cv2.VideoCapture(video)
     if not cap.isOpened():
         raise SystemExit(f"cannot read {video}: check the path, or that OpenCV can open this kind of file")
+    return cap.get(cv2.CAP_PROP_FPS), Frames(cap)
 
-    def frames():
-        try:
-            while True:
-                ok, frame = cap.read()
-                if not ok:
-                    return
-                yield cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
-        finally:
-            cap.release()
-    return cap.get(cv2.CAP_PROP_FPS), frames()
+
+UNEVEN = 0.01  # frame times further than this from their usual spacing: a variable frame rate
+
+
+def uneven(times):
+    """A warning when the frames' times are unevenly spaced (a film saved at a variable frame rate, which the frame
+    rate the file stores misrepresents: the frequency comes out wrong), or None."""
+    steps = np.diff(np.asarray(times, float))
+    if len(steps) < 3 or not np.all(np.isfinite(steps)):
+        return None
+    usual = np.median(steps)
+    spread = float(np.abs(steps - usual).max() / usual) if usual > 0 else 0.0
+    if spread > UNEVEN:
+        return Note("uneven", f"the film's frames are unevenly spaced in time (by up to {100 * spread:.0f} %): it was "
+                    "saved at a variable frame rate, so the frequency may be off; save it at a constant frame rate "
+                    "first", spread=round(100 * spread))
+    return None
 
 
 def draw_grid(gray, step=50):
@@ -271,7 +298,8 @@ def tops(x, peaks):
 def tone(x, fps):
     """The strongest frequency in a record (Hz), the highest peak of its spectrum above three cycles in the record,
     refined between bins, and that tone's amplitude (px). A straight-line trend is taken off first, so a slow drift or
-    a bridged gap is not read as ringing."""
+    a bridged gap is not read as ringing. NaN for both when the highest point lies at the bottom of the searched
+    range, or the parabola's top more than half a bin beyond the three bins it is drawn through: no peak to place."""
     if len(x) < 12 or not np.all(np.isfinite(x)):
         raise ValueError(Note("few-swings", "too few swings to find a frequency: the largest swing should come at "
                               "the knock, not later"))
@@ -282,8 +310,13 @@ def tone(x, fps):
     spectrum = np.abs(np.fft.rfft(flat * window, n))
     lowest = 3 * 8  # three cycles in the record, in the padded spectrum's bins
     k = np.argmax(spectrum[lowest:-1]) + lowest
+    if k == lowest:  # the highest point at the bottom of the searched range: the spectrum still rises below it, so
+        return float("nan"), float("nan")  # the peak lies below three cycles in the record (no frequency)
     a, b, c = np.log(spectrum[k - 1:k + 2])
     between = 0.5 * (a - c) / (a - 2 * b + c)  # the parabola's top, in bins from k
+    if not abs(between) <= 1.5:  # a top beyond the three bins it was drawn through, by more than the half bin a peak
+        # on the outer bin can give (at half the frame rate, 1.002 bins), would be extrapolated: the audit's case, -6.4
+        return float("nan"), float("nan")
     top = np.exp(b - 0.25 * (a - c) * between)  # and its height
     return (k + between) * fps / n, 2 * top / window.sum()
 
@@ -378,9 +411,14 @@ def floor_of(x, fixed, min_peak=None):
     return noise, (min_peak if min_peak is not None else max(10 * noise, 1.0))
 
 
-def lost_note(part, fixed):
-    """A warning when a point was lost in more than 2 % of the frames, or None."""
+def lost_note(part, fixed, span=None):
+    """A warning when a point was lost in any frame of span (the frames read, a slice), whose peaks a bridged gap
+    can bend, or in more than 2 % of all the frames; or None."""
     lost = np.isnan(part).any(axis=1) | np.isnan(fixed).any(axis=1)
+    if span is not None and lost[span].any():
+        inside = lost[span]
+        return Note("lost-some", f"a point was lost in {inside.sum()} of the {len(inside)} frames read, bridged by a "
+                    "straight line: the readings may be off; check them", lost=int(inside.sum()), frames=len(inside))
     if lost.mean() > 0.02:
         return Note("lost-some", f"a point was lost in {lost.sum()} of {len(lost)} frames, bridged by a straight line: "
                     "check them", lost=int(lost.sum()), frames=len(lost))
@@ -390,10 +428,14 @@ def lost_note(part, fixed):
 def read(part, fixed, fps, min_peak=None):
     """The swing, the tracker's jitter, the floor and measure()'s readings, from the two points' shifts: what the
     script prints, for the command line and for a page that runs it."""
+    if len(part) < 12:
+        raise ValueError(Note("few-swings", "too few frames to find a frequency: film longer"))
     x = swing(part, fixed)
     noise, floor = floor_of(x, fixed, min_peak)
     readings = measure(x, fps, floor)
-    note = lost_note(part, fixed)
+    peaks, period = readings[4], fps / readings[0]
+    span = slice(max(0, int(peaks[0] - period)), int(peaks[-1] + period) + 1)  # the peaks read, a swing either side
+    note = lost_note(part, fixed, span)
     if note:
         readings[-1].append(note)
     return x, noise, floor, readings
@@ -434,6 +476,7 @@ def film(args):
         raise SystemExit(f"no folder for {args.plot}")
 
     stored, frames = read_video(args.video)
+    args.frames = frames  # its frame times, for uneven() once they have been read
     if args.start or args.end is not None:  # keep the frames between --start and --end, by the file's own clock
         if not stored or stored <= 0:
             raise SystemExit("the file stores no frame rate, so --start and --end cannot be placed")
@@ -460,6 +503,9 @@ def main():
                      "save the swing and the peaks used to this image").parse_args()
     fps, stored, frames = film(args)
     part, fixed = track(frames, [args.part, args.fixed], args.box, report=True)
+    timing = uneven(args.frames.times)
+    if timing:
+        print(f"warning: {timing}")
     try:
         x, noise, floor, (fd, fn, zeta, decrement, peaks, warnings) = read(part, fixed, fps, args.min_peak)
     except ValueError as e:

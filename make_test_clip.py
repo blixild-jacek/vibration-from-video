@@ -26,6 +26,9 @@ TIP = (424, 240)    # the middle of the swinging patch at rest, px; the first fr
 FIXED = (104, 84)   # the middle of the patch that does not move, px
 
 
+
+LEAD = 120.0  # s: the longest steady run driven() integrates before the film starts
+
 def first_tip(amplitude, scale=1):
     """The middle of the swinging patch in the first frame of a ring-down, where the swing starts, px."""
     return TIP[0] * scale, TIP[1] * scale + int(round(amplitude))
@@ -61,7 +64,9 @@ def driven(fn, zeta, amplitude, speed, seconds):
     run at the first speed and scaled so the largest swing is amplitude."""
     from scipy.integrate import solve_ivp
     wn = 2 * np.pi * fn
-    lead = 8 / (zeta * wn)  # a steady run at the first speed first, so the start-up transient has died away
+    # a steady run at the first speed first, so the start-up transient has died away; at most LEAD s, so a tiny
+    # damping ratio does not turn it into hours of integration
+    lead = min(8 / (zeta * wn), LEAD)
     f0 = float(speed(0.0))
 
     def rhs(t, s):
@@ -130,23 +135,29 @@ def main():
     ap.add_argument("--fps", type=float, default=60.0)
     ap.add_argument("--seconds", type=float, default=15.0)
     ap.add_argument("--noise", type=float, default=2.0, help="sensor noise, grey levels")
-    ap.add_argument("--coast-down", type=float, nargs=2, metavar=("START", "END"),
-                    help="a machine coasting down from START to END Hz drives the part, instead of a tap")
-    ap.add_argument("--steps", type=float, nargs="+", metavar="HZ",
-                    help="the drive stepped through these speeds, Hz, each held for an equal share of the clip")
+    drive = ap.add_mutually_exclusive_group()
+    drive.add_argument("--coast-down", type=float, nargs=2, metavar=("START", "END"),
+                       help="a machine coasting down from START to END Hz drives the part, instead of a tap")
+    drive.add_argument("--steps", type=float, nargs="+", metavar="HZ",
+                       help="the drive stepped through these speeds, Hz, each held for an equal share of the clip")
+    ap.add_argument("--scale", type=int, default=1, help="the frame and patches this many times larger (3: 1920 x 1440)")
     args = ap.parse_args()
-    make(args.out, args.fn, args.zeta, args.amplitude, args.fps, args.seconds, args.noise, args.coast_down, args.steps)
+    if args.scale < 1:
+        ap.error("--scale must be 1 or more")
+    make(args.out, args.fn, args.zeta, args.amplitude, args.fps, args.seconds, args.noise, args.coast_down, args.steps,
+         args.scale)
     print(f"{args.out}: natural frequency {args.fn} Hz, damping ratio {args.zeta}, {args.fps:g} fps, "
           f"{args.seconds:g} s" + (f", coast-down from {args.coast_down[0]:g} to {args.coast_down[1]:g} Hz"
                                   if args.coast_down else "") +
           (f", speed steps {', '.join(f'{s:g}' for s in args.steps)} Hz" if args.steps else "") +
           ". Read it back with:")
     if args.coast_down or args.steps:
-        print(f"  python3 speed_test.py {args.out} --part {TIP[0]} {TIP[1]} --fixed {FIXED[0]} {FIXED[1]} "
-              f"--fps {args.fps:g}")
+        print(f"  python3 speed_test.py {args.out} --part {TIP[0] * args.scale} {TIP[1] * args.scale} --fixed "
+              f"{FIXED[0] * args.scale} {FIXED[1] * args.scale} --fps {args.fps:g}")
     else:
-        x, y = first_tip(args.amplitude)
-        print(f"  python3 free_decay.py {args.out} --part {x} {y} --fixed {FIXED[0]} {FIXED[1]} --fps {args.fps:g}")
+        x, y = first_tip(args.amplitude, args.scale)
+        print(f"  python3 free_decay.py {args.out} --part {x} {y} --fixed {FIXED[0] * args.scale} "
+              f"{FIXED[1] * args.scale} --fps {args.fps:g}")
 
 
 if __name__ == "__main__":

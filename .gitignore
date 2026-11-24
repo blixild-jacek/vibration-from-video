@@ -11,6 +11,7 @@ printer-bed-v1/
 *.mov
 *_first_frame.png
 swing.png
+response.png
 frf.png
 venv/
 .venv/

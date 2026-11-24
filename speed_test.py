@@ -19,10 +19,14 @@ Usage: python3 speed_test.py FILM --part X Y --fixed X Y [--fps 240] [--plot res
 SPDX-License-Identifier: MIT
 Copyright (c) 2026 Jacek Garbuliński Blixild, blixild.com
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 
-import free_decay as fd
-from free_decay import Note
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # free_decay.py beside it, also under python3 -I
+import free_decay as fd  # noqa: E402
+from free_decay import Note  # noqa: E402
 
 CYCLES = 6  # a window's length, in cycles of the loudest frequency
 HOPS = 4    # windows per window length: each starts a quarter of a window after the last
@@ -30,12 +34,17 @@ HOPS = 4    # windows per window length: each starts a quarter of a window after
 # a slower one. Down to 2.4 frames per swing (100 Hz at 240 frames a second) it read the frequency within 0.6 % and the
 # swing in full on generated films (tests); the tap test's damping ratio needs six (free_decay.py)
 NEAR_HALF = 2.5
+EDGE = 0.003  # the largest swing within 0.3 % of the lowest or highest frequency filmed is at the edge of the speeds
+              # covered: at one steady speed the windows differ by about 0.03 % (the audit's stepped film), while a
+              # coast-down's neighbouring windows above the floor differ by about 1 % (tests)
 
 
 def window_length(x, fps):
     """Frames in a window: CYCLES cycles of the strongest frequency in the two seconds around the largest swing."""
     k = int(np.argmax(np.abs(x)))
     f, _ = fd.tone(x[max(0, k - int(fps)):k + int(fps)], fps)
+    if not np.isfinite(f):  # no frequency there (tone()): a window a second long instead
+        return max(24, int(round(fps)))
     return max(24, int(round(CYCLES * fps / f)))
 
 
@@ -49,6 +58,8 @@ def response(x, fps, floor):
     t, f, a = [], [], []
     for s in range(0, len(x) - n + 1, hop):
         fi, ai = fd.tone(x[s:s + n], fps)
+        if not np.isfinite(fi):  # no frequency in this window (tone()): left out
+            continue
         t.append((s + n / 2) / fps)
         f.append(fi)
         a.append(ai)
@@ -65,8 +76,9 @@ def resonance(f, a, above, fps):
     k = int(np.argmax(A))
     peak, size = float(F[k]), float(A[k])
     notes = []
-    if len(F) > 1 and peak in (F.min(), F.max()):
-        side = "lowest" if peak == F.min() else "highest"
+    near = EDGE * peak  # within this of the lowest or highest frequency filmed counts as at it
+    if len(F) > 1 and (peak - F.min() <= near or F.max() - peak <= near):
+        side = "lowest" if peak - F.min() <= F.max() - peak else "highest"
         notes.append(Note("edge-peak", f"the swing is largest at the {side} frequency filmed ({peak:.2f} Hz): the "
                           "resonance may lie beyond the speeds covered", side=side, f=peak))
     if peak > fps / NEAR_HALF:
@@ -96,6 +108,9 @@ def main():
                         "save the response curve and the swing to this image").parse_args()
     fps, stored, frames = fd.film(args)
     part, fixed = fd.track(frames, [args.part, args.fixed], args.box, report=True)
+    timing = fd.uneven(args.frames.times)
+    if timing:
+        print(f"warning: {timing}")
     try:
         x, noise, floor, (t, f, a, above), (peak, size, notes) = read(part, fixed, fps, args.min_peak)
     except ValueError as e:

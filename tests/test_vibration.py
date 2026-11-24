@@ -17,7 +17,6 @@ import zipfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
-import h5py
 import numpy as np
 
 HERE = Path(__file__).resolve().parent.parent
@@ -357,6 +356,10 @@ class Files(unittest.TestCase):
     def test_read_signals(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "s.hdf5"
+            try:
+                h5py = __import__("h5py")  # only this test needs HDF5
+            except ImportError:
+                self.skipTest("h5py is not installed")
             with h5py.File(path, "w") as f:
                 g = f.create_group("InputTask")
                 g["channel_names"] = np.array([b"force", b"acc", b"trigger"])
@@ -420,6 +423,53 @@ class Download(unittest.TestCase):
         self.assertIn("cannot download", str(stop.exception))
         self.assertEqual([p.name for p in self.dest.iterdir()], [])
 
+
+
+class AuditCases(unittest.TestCase):
+    """The failing cases of the independent audit before publication (24 Nov 2026), each now refused or warned about."""
+
+    def test_tone_no_frequency_outside_its_range(self):
+        # a 1 Hz sine over 2 s at 60 fps: its peak lies below the three-cycle floor (1.5 Hz); it read 1.100 Hz before
+        t = np.arange(120) / 60
+        f, a = free_decay.tone(np.sin(2 * np.pi * 1.0 * t), 60)
+        self.assertTrue(np.isnan(f) and np.isnan(a))
+        # a tone well inside the range still reads
+        self.assertAlmostEqual(free_decay.tone(np.sin(2 * np.pi * 7.0 * t), 60)[0], 7.0, places=2)
+
+    def test_speed_test_peak_at_the_edge_of_the_speeds(self):
+        # steps above a resonance: the largest swing at the lowest speed filmed, one window a hair below it
+        f = np.array([13.998, 14.002, 15.0, 16.0])
+        peak, size, notes = speed_test.resonance(f, np.array([5.0, 6.0, 3.0, 2.0]), np.ones(4, bool), 240)
+        self.assertIn("edge-peak", [n.code for n in notes])
+        # one steady speed: every window at about the same frequency
+        f = np.array([10.0, 10.0001, 9.9999])
+        peak, size, notes = speed_test.resonance(f, np.array([1.0, 3.0, 2.0]), np.ones(3, bool), 240)
+        self.assertIn("edge-peak", [n.code for n in notes])
+        # a resonance inside the speeds filmed: no edge warning
+        f = np.array([8.0, 10.0, 12.0, 14.0])
+        peak, size, notes = speed_test.resonance(f, np.array([1.0, 2.0, 5.0, 1.0]), np.ones(4, bool), 240)
+        self.assertNotIn("edge-peak", [n.code for n in notes])
+
+    def test_lost_frames_inside_the_stretch_read_are_reported(self):
+        fps, n = 240, 960
+        t = np.arange(n) / fps
+        part = np.zeros((n, 2))
+        part[:, 0] = 30 * np.exp(-2 * np.pi * 10 * 0.02 * t) * np.cos(2 * np.pi * 10 * t)
+        fixed = np.zeros((n, 2))
+        part[[2, 3, 4, 8, 9]] = np.nan  # 0.5 % of the film, where the first peaks are
+        x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, fixed, fps)
+        self.assertIn("lost-some", [w.code for w in warnings])
+
+    def test_too_short_a_film_is_refused_cleanly(self):
+        with self.assertRaises(ValueError) as e:
+            free_decay.read(np.zeros((1, 2)), np.zeros((1, 2)), 60)
+        self.assertEqual(e.exception.args[0].code, "few-swings")
+
+    def test_unevenly_spaced_frames_are_reported(self):
+        even = np.arange(100) * (1000 / 60)
+        self.assertIsNone(free_decay.uneven(even))
+        changed = np.concatenate([np.arange(50) * (1000 / 60), 50 * (1000 / 60) + np.arange(1, 51) * (1000 / 30)])
+        self.assertEqual(free_decay.uneven(changed).code, "uneven")
 
 if __name__ == "__main__":
     unittest.main()

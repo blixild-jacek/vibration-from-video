@@ -120,8 +120,10 @@ Tests: `python3 -m unittest discover tests`.
    ones. For a thin strip, use a smaller `--box`; the script prints how many corners it found in each square and
    warns when a square holds corners that moved and corners that did not.
 5. Check the frame rate it prints. A slow-motion file may store the rate it plays back at; `--fps` gives the rate it
-   was filmed at. A wrong rate scales the frequency and leaves the damping ratio as it is. A file with a varying
-   frame rate, as some phones record, is timed by its average rate.
+   was filmed at. A wrong rate scales the frequency and leaves the damping ratio as it is. A file saved at a varying
+   frame rate, as some phones record, would be timed by its average rate, which gives a wrong frequency: the script
+   warns when the frames' times are unevenly spaced, and such a film is best saved again at a constant rate first
+   (for example `ffmpeg -i in.mp4 -vf fps=240 out.mp4`, at the rate it was filmed).
 
 It worked when two taps give the same frequency, the script prints no warning, and the peaks in `swing.png` shrink
 evenly.
@@ -148,7 +150,9 @@ NumPy 1.26 and SciPy 1.17 from conda, and Python 3.15 with OpenCV 5.1, NumPy 2.5
 requirements.txt:
 
 - **Test films** made by `make_test_clip.py`, 1 to 200 Hz: the frequency within 0.05 % and the damping ratio within
-  2 % of the values set, with six or more frames per swing. With fewer, the frequency still held (within 0.014 %
+  2 % of the values set, with six or more frames per swing, where the tracker followed every frame (a frame it loses
+  is bridged with a straight line, which can bend the peaks: the script warns about any lost frame among those it
+  reads). With fewer, the frequency still held (within 0.014 %
   down to 2.4 frames per swing, 100 Hz at 240 frames a second) but the damping ratio depended on how the frames fell
   on the swings: within 1 % on films at 240 frames a second, 4 % and 12.5 % low on two films at 30 frames a second,
   where the script warns. The speed test read 50 and 80 Hz at 240 frames a second within 0.6 %, the swing in full.
@@ -172,8 +176,8 @@ requirements.txt:
   where the fit read 0.013 and 0.021. The script warns when the peaks' logarithms do not lie on a straight line.
 - **Every surface.** The tracker needs texture, such as corners, bolts or a sticker. Plain or shiny surfaces, glare,
   motion blur and flickering light are not covered by the tests. The tap test has read six real films, of a frame
-  struck with a hammer in the CAMELOT benchmark (Politecnico di Torino, Zenodo, CC BY 4.0): the frame moved under a
-  pixel, and the script declined all six. The speed test has not yet read a film of a real machine.
+  struck with a hammer in the CAMELOT benchmark (Politecnico di Torino, https://doi.org/10.5281/zenodo.15119038,
+  CC BY 4.0): the frame moved under a pixel, and the script declined all six. The speed test has not yet read a film of a real machine.
 - **The brightness reading** is a quick first look: on the printer bed it read 221 Hz for the resonance at 215 Hz,
   and at 264 Hz it found the frequency but read the damping 30 to 40 % low.
 
@@ -209,4 +213,5 @@ The data: D. Gorjup, K. Zaletelj, J. Slavič (2026), "Printer-bed dataset: high-
 measurements of a suspended 3D-printer bed", Zenodo record 21476609 (the dataset's first version), [doi:10.5281/zenodo.21476609](https://doi.org/10.5281/zenodo.21476609),
 under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Their own processing code is at
 [ladisk/mssp-image-tutorial](https://github.com/ladisk/mssp-image-tutorial). This repository does not include the
-data; `--download` fetches it from Zenodo.
+data; `--download` fetches it from Zenodo, and stops rather than replace a folder of the same name it did not
+unpack itself.
