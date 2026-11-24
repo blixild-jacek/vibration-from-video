@@ -158,6 +158,7 @@ evenly.
 | `--box` | 41 px | The square around each point whose corners are followed. It must lie on the part (or on the still object). |
 | `--min-peak` | 1 px, or ten times the jitter if that is larger | The smallest peak the damping is read from. A pixel is a safe target from test videos, where peaks under about a pixel came out up to 17 % low and bent the reading, not a physical limit; below the floor the script reads the frequency alone. Given, it replaces the default. |
 | `--plot` | none | Saves the swing, the peaks used and the floor. |
+| `--outline` | off | The part's point is on its outline against a plain background (a shaft, or another part whose surface turns and carries its texture away): the edge through it is followed across its 41 px width, not texture. Pick a stretch of edge with one clean step and nothing else within 12 px, such as a stripe of light, a key or a bolt head. |
 
 The jitter is how much a point seems to move from one frame to the next, the tracker's noise: the still point's, or
 the settled swing's when a shaking camera makes the still point's larger. A video's compression can leave a still point
@@ -211,21 +212,25 @@ requirements.txt:
   that dies away slowest: in one of the printer-bed videos the ring-down read almost no damping at 126 and 215 Hz,
   where the fit read 0.013 and 0.021. The script warns when the first and second halves of the peaks give damping
   ratios further apart than their scatter allows.
-- **Every surface.** The tracker needs texture, such as corners, bolts or a sticker. Plain or shiny surfaces, glare,
-  motion blur and flickering light are not covered by the tests. The tap test has read six real videos, of a frame
+- **Every surface.** The tracker needs texture, such as corners, bolts or a sticker; a turning part is followed by
+  its outline instead (`--outline`). Plain or shiny surfaces, glare, motion blur and flickering light are not covered
+  by the tests. The tap test has read six real videos, of a frame
   struck with a hammer in the CAMELOT benchmark (Politecnico di Torino, https://doi.org/10.5281/zenodo.15119038,
   CC BY 4.0), with accelerometers on the frame. It moved under a pixel, so no damping ratio. Read up to 32 s, before
   someone walks past the still point, four videos gave the frequency alone within 0.4-1.4 % of the accelerometer over
   the same seconds, their ring 37-70 times the noise; the other two, at 3.8 and 2.0 times, were declined. Four more
   videos of the same frame, unopened until the rule was frozen and the predictions written, all gave the frequency
-  alone within 1.2 % of the accelerometer over the same seconds, compared as displacement. The speed test was tried on
+  alone within 1.2 % of the accelerometer over the same seconds, compared as displacement. The speed test read
   six run-ups of a real rotor (Kang et al. 2024, Mendeley Data, https://doi.org/10.17632/47y7rwc2yg.1, CC BY 4.0)
-  filmed from about 2 m, whose critical speed the shaft's eddy-current probe puts at 35.4-35.8 Hz: in all six the swing
-  stayed under the floor (0.1-0.2 px in the first two) and it declined them; with the floor lowered as a diagnosis, the
-  disk's swing in the first two peaked within 0.7 % of the critical speed. A first rule for the speed test below a pixel, fixed on simulated noise, was tried blind on four
-  of the run-ups: it read four of five points within 2.6 % of the probe but one 16 % off, past the limit set before
-  the test (in a fast run-up the resonance's peak spreads, and a sharper one past it was read), so it was taken out.
-  Unlike the tap test, the speed test has no reading below a pixel.
+  filmed from about 2 m, whose critical speed the shaft's eddy-current probe puts at 35.4-35.8 Hz. Points chosen on
+  texture swung 0.1-0.2 px and were declined: their squares held the disk's face and the coupling's key, which turn
+  with the rotor, and a still probe's stand. Measured on its edges, the rotor swings 1-2 px at the critical speed.
+  With `--outline` on the shaft's top edge at two places, 11 of 12 readings fell within 2.1 % of the probe, most
+  with the warning that the swing, barely over the floor, is not seen falling on either side; the twelfth read 10 %
+  low, as a second edge 8 px away took the point's place once a revolution. On the disk's top, 2 of 6 read right:
+  a stripe of reflected light 7-9 px under its edge gave a second edge of the same kind. These readings are not blind
+  (the probe's answers were known); the outline's settings were fixed on generated videos first. Unlike the tap
+  test, the speed test has no reading below a pixel.
 - **The brightness reading** is a quick first look: on the printer bed it read 221 Hz for the resonance at 215 Hz,
   and at 264 Hz it found the frequency but read the damping 30 to 40 % low.
 
