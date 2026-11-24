@@ -623,5 +623,55 @@ class BelowAPixel(unittest.TestCase):
         self.assertLess(max(ratios), free_decay.FAINT_RATIO)
 
 
+
+class OutlinePoint(unittest.TestCase):
+    """A part whose surface turns (make_test_clip's turning bar): its texture slides away, its outline is followed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.coast = str(Path(cls.tmp.name) / "bar-coast.mp4")
+        make_test_clip.make(cls.coast, fn=12.0, zeta=0.02, amplitude=3.0, fps=240.0, seconds=12.0, coast=(18.0, 7.0),
+                            outline=True)
+        cls.tap = str(Path(cls.tmp.name) / "bar-tap.mp4")
+        make_test_clip.make(cls.tap, fn=2.0, zeta=0.03, amplitude=2.0, fps=60.0, seconds=10.0, outline=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def shifts(self, path, outline=(0,), point=None):
+        fps, frames = free_decay.read_video(path)
+        part, fixed = free_decay.track(frames, [point or make_test_clip.outline_point(), make_test_clip.FIXED],
+                                       outline=outline)
+        return fps, np.asarray(part), np.asarray(fixed)
+
+    def test_a_turning_bar_is_read_by_its_outline(self):
+        fps, part, fixed = self.shifts(self.coast)
+        x, noise, floor, windows, (peak, size, notes) = speed_test.read(part, fixed, fps)
+        self.assertAlmostEqual(peak, 12.0, delta=0.02 * 12.0)  # a coast-down reads a little low
+        self.assertAlmostEqual(size, 3.0, delta=0.3)
+
+    def test_its_texture_cannot_be_followed(self):
+        with self.assertRaises(SystemExit):  # the surface slides away: lost, or too faint to start
+            fps, part, fixed = self.shifts(self.coast, outline=(), point=make_test_clip.TIP)
+            speed_test.read(part, fixed, fps)
+
+    def test_the_edge_is_placed_to_about_a_tenth_of_a_pixel(self):
+        # the turning surface's texture just inside the outline slides past it and moves the edge a little: 0.06 to
+        # 0.11 px RMS on this clip, sharp or blurred (the corner tracker on texture: about a hundredth)
+        fps, part, fixed = self.shifts(self.tap)
+        t = np.arange(len(part)) / fps
+        truth = make_test_clip.ring_down(2.0, 0.03, 2.0)(t)
+        measured = part[:, 1] - part[0, 1] + truth[0]
+        self.assertLess(np.sqrt(np.mean((measured - truth) ** 2)), 0.15)
+
+    def test_a_point_off_any_outline_is_refused(self):
+        frame = np.full((480, 640), 128, np.uint8)
+        with self.assertRaises(SystemExit) as e:
+            free_decay.Tracker(frame, [(300, 300)], outline=(0,))
+        self.assertEqual(e.exception.args[0].code, "outline")
+
+
 if __name__ == "__main__":
     unittest.main()

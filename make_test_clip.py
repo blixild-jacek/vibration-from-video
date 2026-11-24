@@ -24,10 +24,16 @@ import numpy as np
 
 TIP = (424, 240)    # the middle of the swinging patch at rest, px; the first frame shows it a full swing lower
 FIXED = (104, 84)   # the middle of the patch that does not move, px
+SPIN = 7            # px a frame the turning bar's surface slides sideways (outline=True)
 
 
 
 LEAD = 120.0  # s: the longest steady run driven() integrates before the video starts
+
+def outline_point(scale=1):
+    """A point on the turning bar's top edge at rest (outline=True), px."""
+    return TIP[0] * scale, (TIP[1] - 24) * scale
+
 
 def first_tip(amplitude, scale=1):
     """The middle of the swinging patch in the first frame of a ring-down, where the swing starts, px."""
@@ -86,11 +92,13 @@ def coast_down(fn, zeta, amplitude, start, end, seconds):
 
 
 def make(out, fn=2.0, zeta=0.03, amplitude=40.0, fps=60.0, seconds=15.0, noise=2.0, coast=None, speeds=None,
-         scale=1):
+         scale=1, outline=False):
     """Write the clip to out: a ring-down after a tap; with coast=(start, end) a coast-down from start to end Hz over
     the whole clip; with speeds=[...] the drive stepped through those speeds (Hz), each held for an equal share. With
     scale=3 the frame, the patches and their places are three times larger (1920 x 1440), the texture as fine and the
-    swing as given."""
+    swing as given. With outline, the swinging part is a turning bar across the strip, dark, its surface texture
+    sliding sideways SPIN px a frame as a turning surface does, so its texture cannot be followed but its outline (top
+    edge at outline_point()) can."""
     if not (fn > 0 and 0 < zeta < 1 and 0 < amplitude <= 150 and fps > 0 and seconds > 0):
         raise SystemExit("needs a natural frequency above 0, a damping ratio between 0 and 1, a first swing of up to "
                          "150 px, and a frame rate and length above 0")
@@ -104,6 +112,10 @@ def make(out, fn=2.0, zeta=0.03, amplitude=40.0, fps=60.0, seconds=15.0, noise=2
     rng = np.random.default_rng(1)
     s, half = int(scale), 24 * int(scale)
     tip, fixed = patch(rng, 2 * half), patch(rng, 2 * half)
+    # the turning bar seen as a cylinder: its surface texture foreshortened to nothing at the outline, where the surface
+    # is seen edge-on, by sqrt(1 - (r / R)^2) across its height
+    across = np.sqrt(np.clip(1 - ((np.arange(2 * half) + 0.5 - half) / half) ** 2, 0, 1))[:, None]
+    bar = 40 + 0.25 * across * cv2.resize(patch(rng, 2 * half), (130 * s, 2 * half), interpolation=cv2.INTER_NEAREST)
     w, h = 640 * s, 480 * s
     (tx, ty), (fx, fy) = (TIP[0] * s, TIP[1] * s), (FIXED[0] * s, FIXED[1] * s)
     video = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h), isColor=False)
@@ -116,7 +128,11 @@ def make(out, fn=2.0, zeta=0.03, amplitude=40.0, fps=60.0, seconds=15.0, noise=2
         frame[fy - half:fy + half, fx - half:fx + half] = fixed  # the point that does not move
         # the tip, shifted by a fraction of a pixel where needed
         canvas = np.full((h, w), 128, np.float32)
-        canvas[ty - half:ty + half, tx - half:tx + half] = tip
+        if outline:  # a dark bar across the strip, its surface texture turned by SPIN px a frame
+            surface = np.roll(bar, -SPIN * s * i, axis=1)
+            canvas[ty - half:ty + half, 360 * s:490 * s] = surface
+        else:
+            canvas[ty - half:ty + half, tx - half:tx + half] = tip
         shift = np.float32([[1, 0, 0], [0, 1, y]])
         moved = cv2.warpAffine(canvas, shift, (w, h), flags=cv2.INTER_LINEAR, borderValue=128)
         top, bottom = max(ty - half - int(amplitude) - 4, 0), min(ty + half + int(amplitude) + 4, h)
@@ -141,17 +157,23 @@ def main():
     drive.add_argument("--steps", type=float, nargs="+", metavar="HZ",
                        help="the drive stepped through these speeds, Hz, each held for an equal share of the clip")
     ap.add_argument("--scale", type=int, default=1, help="the frame and patches this many times larger (3: 1920 x 1440)")
+    ap.add_argument("--outline", action="store_true", help="the part a turning bar, followed by its outline")
     args = ap.parse_args()
     if args.scale < 1:
         ap.error("--scale must be 1 or more")
     make(args.out, args.fn, args.zeta, args.amplitude, args.fps, args.seconds, args.noise, args.coast_down, args.steps,
-         args.scale)
+         args.scale, args.outline)
     print(f"{args.out}: natural frequency {args.fn} Hz, damping ratio {args.zeta}, {args.fps:g} fps, "
           f"{args.seconds:g} s" + (f", coast-down from {args.coast_down[0]:g} to {args.coast_down[1]:g} Hz"
                                   if args.coast_down else "") +
           (f", speed steps {', '.join(f'{s:g}' for s in args.steps)} Hz" if args.steps else "") +
           ". Read it back with:")
-    if args.coast_down or args.steps:
+    if args.outline:
+        x, y = outline_point(args.scale)
+        script = "speed_test.py" if args.coast_down or args.steps else "free_decay.py"
+        print(f"  python3 {script} {args.out} --part {x} {y} --fixed {FIXED[0] * args.scale} {FIXED[1] * args.scale} "
+              f"--fps {args.fps:g} --outline")
+    elif args.coast_down or args.steps:
         print(f"  python3 speed_test.py {args.out} --part {TIP[0] * args.scale} {TIP[1] * args.scale} --fixed "
               f"{FIXED[0] * args.scale} {FIXED[1] * args.scale} --fps {args.fps:g}")
     else:

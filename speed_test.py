@@ -126,7 +126,8 @@ def main():
                         "through its speeds or coasting down.",
                         "save the response curve and the swing to this image").parse_args()
     fps, stored, frames = fd.film(args)
-    part, fixed = fd.track(frames, [args.part, args.fixed], args.box, report=True)
+    part, fixed = fd.track(frames, [args.part, args.fixed], args.box, report=True,
+                           outline=(0,) if args.outline else ())
     timing = fd.uneven(args.frames.times)
     if timing:
         print(f"warning: {timing}")

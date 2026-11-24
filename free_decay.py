@@ -38,6 +38,17 @@ TEXTURE_STOP, TEXTURE_WARN = 0.005, 0.02
 # the point's square, the tracker's coarsest level (21 px at an eighth of the size, about 80 px) and a swing of up to
 # REACH px, beyond which the tracker warns
 MARGIN = 256
+# An outline point: a point on the part's outline against what lies behind it, for a part whose surface turns (a
+# shaft, a disk, a coupling), where the corners in a square turn away with the surface or are lost, while the outline
+# stays put in the picture and moves only as the part does. The edge through the point is found in the first frame
+# (its normal from the gradients in the square, its strongest step along that normal), and in every frame its
+# sub-pixel position along the normal, from the brightness profile across it averaged over the square's width. Only
+# motion across the edge is seen: motion along it is not. On a test clip of a turning bar, whose surface texture slides
+# past just inside the outline, the edge was placed to 0.06-0.11 px RMS, sharp or blurred, against the corner tracker's
+# hundredth of a pixel on texture: an outline point suits swings of a pixel or more, as the speed test reads.
+OUTLINE_REACH = 12  # px either side of the edge's first position along its normal that are searched for it
+OUTLINE_STOP = 8.0  # grey levels per px: a weaker step is no outline to follow
+OUTLINE_STRAIGHT = 0.5  # the gradients' coherence in the square, 0 (no one direction) to 1 (a straight edge)
 REACH = MARGIN - 100
 # px a point may move from one frame to the next before the tracker is likely to lose it: half the reach of a 21 px
 # Lucas-Kanade window over three pyramid levels (10 px x 2^3 = 80 px). A drawn video tracked at 42 px a frame and lost
@@ -170,14 +181,14 @@ class Tracker:
     (windows: x0, y0, x1, y1), so a large frame costs little more than a small one; step_crops() takes those windows
     alone, cut from the frame by whoever decodes it."""
 
-    def __init__(self, first, points, box=BOX, margin=MARGIN):
+    def __init__(self, first, points, box=BOX, margin=MARGIN, outline=()):
         h, w = first.shape
         half = box // 2
         self.points, self.box = [tuple(p) for p in points], box
-        self.windows = []
+        self.windows, self.outline = [], {}  # outline: index -> the edge followed for an outline point (Outline)
         self.start, self.now, self.ref, self.moves, self.reach, self.ids = [], [], [], [], [], []
         self.corners, self.faint = [], []  # corners found in each square; points whose texture is faint
-        for x, y in points:
+        for i, (x, y) in enumerate(points):
             if not (0 <= x < w and 0 <= y < h):
                 raise SystemExit(Note("outside", f"the point ({x}, {y}) lies outside the {w} x {h} frame",
                                       x=x, y=y, w=w, h=h))
@@ -185,6 +196,16 @@ class Tracker:
             self.windows.append((x0, y0, min(x + margin + 1, w), min(y + margin + 1, h)))
             crop = first[y0:self.windows[-1][3], x0:self.windows[-1][2]]
             cx, cy = x - x0, y - y0  # the point in its window
+            if i in outline:
+                self.outline[i] = Outline(crop, (cx, cy), half, (x, y))
+                self.corners.append(0)
+                self.start.append(np.zeros((0, 2)))
+                self.now.append(None)
+                self.ref.append(None)
+                self.moves.append([np.zeros(2)])
+                self.reach.append(np.zeros(1))
+                self.ids.append(np.arange(0))
+                continue
             eigen = cv2.cornerMinEigenVal(crop, 3)  # how well a patch at each pixel can be followed both ways
             mask = np.zeros_like(crop)
             mask[max(cy - half, 0):cy + half + 1, max(cx - half, 0):cx + half + 1] = 255
@@ -210,6 +231,12 @@ class Tracker:
     def step_crops(self, crops):
         """Follow every point into the next frame, given as each point's window of it."""
         for i, gray in enumerate(crops):
+            if i in self.outline:
+                shift = self.outline[i].shift(gray)
+                self.moves[i].append(shift)
+                if np.isfinite(shift).all():
+                    self.reach[i][0] = max(self.reach[i][0], float(np.hypot(*shift)))
+                continue
             nxt, st, _ = cv2.calcOpticalFlowPyrLK(self.ref[i], gray, self.now[i], None, **LK)
             back, st_back, _ = cv2.calcOpticalFlowPyrLK(gray, self.ref[i], nxt, None, **LK)
             # keep a corner only if following it back lands within half a pixel of where it was
@@ -230,8 +257,9 @@ class Tracker:
 
     def far(self):
         """The points that moved more than REACH px from where they started, near the edge of their window, where
-        the tracker may lose them."""
-        return [p for p, r in zip(self.points, self.reach) if len(r) and r.max() > REACH]
+        the tracker may lose them (an outline point: OUTLINE_REACH less 2 px, near the end of its profile)."""
+        return [p for i, (p, r) in enumerate(zip(self.points, self.reach))
+                if len(r) and r.max() > (OUTLINE_REACH - 2 if i in self.outline else REACH)]
 
     def mixed(self):
         """The points whose square holds corners that moved and corners that stayed still, which suggests it covers
@@ -242,6 +270,62 @@ class Tracker:
             if top > 2 and (r < 0.2 * top).sum() >= 3 and (r > 0.5 * top).sum() >= 3:
                 out.append(p)
         return out
+
+
+class Outline:
+    """The edge through an outline point (OUTLINE_REACH and the constants above it): found in the first frame's window
+    around the point, then its shift along its normal in each later window."""
+
+    def __init__(self, crop, centre, half, point):
+        cx, cy = centre
+        square = crop[max(cy - half, 0):cy + half + 1, max(cx - half, 0):cx + half + 1].astype(np.float32)
+        gx, gy = cv2.Sobel(square, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(square, cv2.CV_32F, 0, 1, ksize=3)
+        tensor = np.array([[(gx * gx).sum(), (gx * gy).sum()], [(gx * gy).sum(), (gy * gy).sum()]])
+        values, vectors = np.linalg.eigh(tensor)
+        straight = float((values[1] - values[0]) / (values[1] + values[0])) if values.sum() > 0 else 0.0
+        self.normal = vectors[:, 1] / np.linalg.norm(vectors[:, 1])  # across the edge
+        along = np.array([-self.normal[1], self.normal[0]])
+        steps = np.arange(-OUTLINE_REACH, OUTLINE_REACH + 1, dtype=np.float32)
+        width = np.arange(-half, half + 1, dtype=np.float32)
+        xs = cx + steps[:, None] * self.normal[0] + width[None, :] * along[0]
+        ys = cy + steps[:, None] * self.normal[1] + width[None, :] * along[1]
+        self.maps = (xs.astype(np.float32), ys.astype(np.float32))
+        d = np.diff(self.profile(crop))
+        k = int(np.argmax(np.abs(d)))
+        self.sign = 1.0 if d[k] > 0 else -1.0
+        self.strength = self.step(self.sign * d, k)
+        if self.strength < OUTLINE_STOP or straight < OUTLINE_STRAIGHT:
+            raise SystemExit(Note("outline", f"no clear outline through ({point[0]}, {point[1]}) to follow: pick a "
+                                  "point on a straight stretch of the part's edge against a plain background",
+                                  x=point[0], y=point[1]))
+        self.start = self.position(crop)
+
+    def profile(self, crop):
+        """The brightness across the edge, averaged along it (one value a px along the normal)."""
+        return cv2.remap(crop.astype(np.float32), *self.maps, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE).mean(1)
+
+    @staticmethod
+    def step(d, k):
+        """The edge's whole step in brightness around its steepest sample k: the rise over two samples either side,
+        which does not depend on where within a pixel the edge falls (a sharp edge's step can sit in one sample or
+        be shared by two)."""
+        return float(np.clip(d[max(k - 2, 0):k + 3], 0, None).sum())
+
+    def position(self, crop):
+        """The edge's position along the normal (px), sub-pixel: its strongest step of the first frame's sign,
+        refined by a parabola; NaN when the whole step is under half the first frame's (the edge hidden or gone)."""
+        d = self.sign * np.diff(self.profile(crop))
+        k = int(np.argmax(d))
+        if self.step(d, k) < 0.5 * self.strength:
+            return float("nan")
+        if 0 < k < len(d) - 1:
+            a, b, c = d[k - 1], d[k], d[k + 1]
+            k = k + 0.5 * (a - c) / (a - 2 * b + c)
+        return float(k)
+
+    def shift(self, crop):
+        """The point's shift since the first frame (px, x and y): along the normal by the edge's move."""
+        return (self.position(crop) - self.start) * self.normal
 
 
 def faint_warning(p):
@@ -260,12 +344,18 @@ def mixed_warning(p):
                 x=p[0], y=p[1])
 
 
-def track(frames, points, box=BOX, report=False):
-    """Follow the corners inside a box around each point through grayscale frames; return each point's shift (px)."""
+def track(frames, points, box=BOX, report=False, outline=()):
+    """Follow the corners inside a box around each point through grayscale frames (or, for the points whose index is
+    in outline, the edge through them: Outline); return each point's shift (px)."""
     frames = iter(frames)
-    tracker = Tracker(next(frames), points, box)
+    tracker = Tracker(next(frames), points, box, outline=outline)
     if report:
-        for (x, y), n in zip(tracker.points, tracker.corners):
+        for i, ((x, y), n) in enumerate(zip(tracker.points, tracker.corners)):
+            if i in tracker.outline:
+                nx, ny = tracker.outline[i].normal
+                print(f"point ({x}, {y}): an outline, followed across it (normal {nx:+.2f}, {ny:+.2f}) over its {box} "
+                      "px width; motion along it is not seen")
+                continue
             print(f"point ({x}, {y}): {n} corners in its {box} px square")
             if (x, y) in tracker.faint:
                 print(f"warning: {faint_warning((x, y))}")
@@ -641,6 +731,8 @@ def arguments(description, plot_help):
     ap.add_argument("--part", type=int, nargs=2, metavar=("X", "Y"), help="a point on the part that swings, px")
     ap.add_argument("--fixed", type=int, nargs=2, metavar=("X", "Y"), help="a point on something that does not move")
     ap.add_argument("--pick", action="store_true", help="click the two points in a window instead")
+    ap.add_argument("--outline", action="store_true", help="the part's point is on its outline against the background "
+                    "(a shaft, a disk or another part whose surface turns): the edge is followed, not texture")
     ap.add_argument("--fps", type=float, help="the rate the video was filmed at, frames a second, when the file "
                     "stores another (a slow-motion file may store the rate it plays back at)")
     ap.add_argument("--box", type=int, default=BOX, help="size of the square tracked around each point, px; the whole "
@@ -694,7 +786,7 @@ def main():
     args = arguments("Natural frequency and damping ratio from a video of a part ringing down.",
                      "save the swing and the peaks used to this image").parse_args()
     fps, stored, frames = film(args)
-    part, fixed = track(frames, [args.part, args.fixed], args.box, report=True)
+    part, fixed = track(frames, [args.part, args.fixed], args.box, report=True, outline=(0,) if args.outline else ())
     timing = uneven(args.frames.times)
     if timing:
         print(f"warning: {timing}")
