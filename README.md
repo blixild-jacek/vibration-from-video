@@ -171,8 +171,9 @@ requirements.txt:
   that dies away slowest: in one of the printer-bed films the ring-down read almost no damping at 126 and 215 Hz,
   where the fit read 0.013 and 0.021. The script warns when the peaks' logarithms do not lie on a straight line.
 - **Every surface.** The tracker needs texture, such as corners, bolts or a sticker. Plain or shiny surfaces, glare,
-  motion blur and flickering light are not covered by the tests, and neither the tap test nor the speed test has yet
-  read a film of a real part.
+  motion blur and flickering light are not covered by the tests. The tap test has read six real films, of a frame
+  struck with a hammer in the CAMELOT benchmark (Politecnico di Torino, Zenodo, CC BY 4.0): the frame moved under a
+  pixel, and the script declined all six. The speed test has not yet read a film of a real machine.
 - **The brightness reading** is a quick first look: on the printer bed it read 221 Hz for the resonance at 215 Hz,
   and at 264 Hz it found the frequency but read the damping 30 to 40 % low.
 
