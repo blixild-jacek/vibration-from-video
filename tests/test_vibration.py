@@ -22,6 +22,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 import check_printer_bed  # noqa: E402
+import faint_noise  # noqa: E402
 import free_decay  # noqa: E402
 import make_test_clip  # noqa: E402
 import speed_test  # noqa: E402
@@ -470,6 +471,43 @@ class AuditCases(unittest.TestCase):
         self.assertIsNone(free_decay.uneven(even))
         changed = np.concatenate([np.arange(50) * (1000 / 60), 50 * (1000 / 60) + np.arange(1, 51) * (1000 / 30)])
         self.assertEqual(free_decay.uneven(changed).code, "uneven")
+class BelowAPixel(unittest.TestCase):
+    """A swing too small for the damping ratio: the frequency alone when a ring stands out of the film's quiet end."""
+
+    def film(self, ring, seconds=30.0, fps=25.0, hz=3.7, seed=0):
+        """The two points' shifts (px): a ring of first swing ring x 0.01 px after a tap at 5 s, in jitter of 0.01 px
+        and a drift five times that (faint_noise.swing, in units of the jitter), all on the part's point; the still
+        point stays still."""
+        x = 0.01 * faint_noise.swing(np.random.default_rng(seed), fps, seconds, 5, ring, hz)
+        part = np.zeros((len(x), 2))
+        part[:, 0] = x
+        return part, np.zeros_like(part), fps
+
+    def test_a_ring_of_a_third_of_a_pixel_gives_the_frequency_alone(self):
+        part, fixed, fps = self.film(30)
+        x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, fixed, fps)
+        self.assertAlmostEqual(fd, 3.7 * np.sqrt(1 - 0.02 ** 2), delta=0.01 * 3.7)
+        self.assertTrue(np.isnan(zeta) and np.isnan(dec) and len(peaks) == 0)
+        note = [w for w in warnings if w.code == "frequency-only"][0]
+        self.assertEqual(note.values["why"], "below-floor")  # a page words it by its code and values
+        self.assertGreaterEqual(note.values["ratio"], free_decay.FAINT_RATIO)
+
+    def test_noise_alone_under_a_pixel_is_still_refused(self):
+        part, fixed, fps = self.film(0)
+        with self.assertRaises(ValueError) as e:
+            free_decay.read(part, fixed, fps)
+        self.assertEqual(e.exception.args[0].code, "below-floor")
+
+    def test_a_film_with_no_quiet_end_is_refused(self):
+        part, fixed, fps = self.film(30, seconds=6.0)  # the film stops a second after the tap
+        with self.assertRaises(ValueError):
+            free_decay.read(part, fixed, fps)
+
+    def test_simulated_noise_stays_under_the_threshold(self):
+        rng = np.random.default_rng(1)
+        ratios = [faint_noise.ratio(faint_noise.swing(rng, 25.0, 20.0, 10), 25.0) for _ in range(100)]
+        self.assertLess(max(ratios), free_decay.FAINT_RATIO)
+
 
 if __name__ == "__main__":
     unittest.main()
