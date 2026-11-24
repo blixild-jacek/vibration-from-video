@@ -329,6 +329,8 @@ def tone(x, fps, falling=False):
                               "the knock, not later"))
     spectrum_, total = spectrum(x, falling)
     n, lowest = 8 * len(x), LOWEST
+    if not spectrum_[lowest:-1].max() > 1e-9 * total * max(1.0, float(np.abs(x).max())):  # a flat record, such as a
+        return float("nan"), float("nan")  # gap bridged by a straight line: only rounding noise, no frequency
     k = np.argmax(spectrum_[lowest:-1]) + lowest
     if k == lowest:  # the highest point at the bottom of the searched range: the spectrum still rises below it, so
         return float("nan"), float("nan")  # the peak lies below three cycles in the record (no frequency)
@@ -413,6 +415,9 @@ def measure(x, fps, floor):
     start, end = ringing_part(x, fps, floor)
     ringing = x[start:end]
     fd = frequency(ringing, fps)
+    if not np.isfinite(fd):  # no peak at all: the largest swing was not a tap, such as someone moving the camera
+        raise ValueError(Note("no-peak", "no clear frequency in the swing: check the points, and read only the stretch "
+                              "from just before the tap until the part is still (--start, --end)"))
     if not 0 < fd < fps / 2:
         raise ValueError(Note("no-frequency", f"no clear frequency in the swing ({fd:.3f} Hz at {fps:g} fps): check "
                               "--fps and the points", fd=fd, fps=fps))

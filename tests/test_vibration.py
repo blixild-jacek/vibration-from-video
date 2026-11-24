@@ -468,6 +468,13 @@ class AuditCases(unittest.TestCase):
         x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, fixed, fps)
         self.assertIn("lost-some", [w.code for w in warnings])
 
+    def test_a_swing_with_no_peak_asks_for_the_stretch_from_the_tap(self):
+        for flat in (38, 300):  # a point lost near the end and bridged flat, as when someone walks past it
+            x = np.r_[np.zeros(300), 9 * np.ones(flat)]
+            with self.assertRaises(ValueError) as e:
+                free_decay.measure(x, 25, 1.0)
+            self.assertEqual(e.exception.args[0].code, "no-peak")
+
     def test_too_short_a_film_is_refused_cleanly(self):
         with self.assertRaises(ValueError) as e:
             free_decay.read(np.zeros((1, 2)), np.zeros((1, 2)), 60)
