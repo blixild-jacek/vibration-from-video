@@ -502,6 +502,12 @@ def noise_in(x):
     # times its mean
 
 
+def first_and_noise(y, fps, hz):
+    """A ring's first swing (px, the largest within one period of the stretch's start) and the stretch's noise
+    (noise_in()): the two sides of its signal-to-noise ratio."""
+    return float(np.abs(y[:max(2, int(round(fps / hz)))]).max()), noise_in(y)
+
+
 def signal_to_noise(x, fps, floor, readings):
     """The ring's signal-to-noise ratio: its first swing (px) over the noise of the stretch read (noise_in()), and, when
     the damping ratio was read, the ring-down's d = (first / noise) x sqrt(fps / (8 pi zeta fn)), with the best
@@ -511,12 +517,10 @@ def signal_to_noise(x, fps, floor, readings):
     only = [w for w in warnings if getattr(w, "code", "") == "frequency-only"]
     if only:
         a, b = only[0].values["start"], only[0].values["end"]
-        y = drift_off(x, fps)[a:b]
-        first = float(np.abs(y[:max(2, int(round(fps / fd)))]).max())
+        first, noise = first_and_noise(drift_off(x, fps)[a:b], fps, fd)
     else:
         a, b = ringing_part(x, fps, floor)
-        y, first = x[a:b], float(abs(x[a]))
-    noise = noise_in(y)
+        first, noise = float(abs(x[a])), noise_in(x[a:b])
     out = {"first": first, "noise": noise, "ratio": first / noise}
     if np.isfinite(zeta) and zeta > 0:
         d = first / noise * np.sqrt(fps / (8 * np.pi * zeta * fn))
