@@ -320,6 +320,13 @@ def spectrum(x, falling=False):
     return np.abs(np.fft.rfft(flat * window, 8 * len(x))), window.sum()
 
 
+def own(x, falling=False):
+    """A record's own highest spectral peak over its median, above three cycles in the record (spectrum()): a tone
+    gathers in one peak, while white noise or a blip spreads over every frequency (2 to 4 for white noise)."""
+    s = spectrum(x, falling)[0][LOWEST:-1]
+    return float(s.max() / np.median(s))
+
+
 def tone(x, fps, falling=False):
     """The strongest frequency in a record (Hz), the highest peak of its spectrum() above three cycles in the record
     (with the falling window if falling), refined between bins, and that tone's amplitude (px). NaN for both when the
@@ -510,7 +517,7 @@ def faint(x, fps, lengths=FAINT_LENGTHS, quiet=FAINT_QUIET):
         top = max(spectrum(y[a:b], True)[0][LOWEST:-1].max() for a, b in spans[1:])
         if not np.isfinite(hz) or not top > 0:  # no peak to place, or a quiet stretch with no noise at all
             continue
-        found.append((hz, ring.max() / top, seconds, start, start + n, ring.max() / np.median(ring)))
+        found.append((hz, ring.max() / top, seconds, start, start + n, own(y[start:start + n], True)))
     passing = [f for f in found if passes(f, fps)]
     return max(passing, key=lambda f: f[2]) if passing else max(found, key=lambda f: f[1], default=None)
 
