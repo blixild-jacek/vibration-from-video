@@ -746,6 +746,25 @@ class OutlinePoint(unittest.TestCase):
         np.testing.assert_allclose(read, moves, atol=0.05)
         self.assertEqual(tracker.far(), [])
 
+    def test_a_hidden_edge_is_lost_without_a_far_warning(self):
+        # a hand passing or a dark frame: no step is strong enough anywhere, so the edge is lost there, and the end of
+        # the stretch, where the noise may happen to be steepest, is not taken for it
+        tracker = free_decay.Tracker(self.edge_frame(100.0), [(100, 100)], outline=(0,))
+        rng = np.random.default_rng(0)
+        for i in range(40):
+            dark = rng.normal(20, 2, (200, 200)).clip(0, 255).astype(np.uint8)
+            tracker.step(dark if i % 10 == 5 else self.edge_frame(100.0 + 0.5 * np.sin(i)))
+        read = tracker.shifts()[0][1:, 1]
+        self.assertTrue(np.isnan(read[5::10]).all())
+        self.assertEqual(tracker.far(), [])
+
+    def test_the_far_warning_measures_toward_the_end_the_edge_came_near(self):
+        moves = np.r_[np.arange(-0.5, -4.0, -0.5), np.arange(-3.0, 3.0, 0.5)]  # up 3.5 px, then down to 2.5 px
+        tracker, read = self.follow((100, 92), moves)  # picked 8 px above the edge: 2 px of room downward
+        self.assertEqual(tracker.far(), [(100, 92)])
+        self.assertEqual(tracker.far_limit((100, 92)), 2.0)
+        self.assertIn("pick the point on the edge itself", free_decay.far_warning((100, 92), 2.0, outline=True))
+
     def test_a_clip_whose_edge_would_leave_the_stretch_is_refused(self):
         with self.assertRaises(SystemExit):
             make_test_clip.make(str(Path(self.tmp.name) / "wide.mp4"), amplitude=make_test_clip.OUTLINE_SWING + 1,

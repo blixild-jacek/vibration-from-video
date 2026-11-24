@@ -74,14 +74,15 @@ accelerometer processing that are not in this repository.)
 The fit needs the tracker to read small swings in proportion, and a compressed video can break that. On a generated
 clip (a 0.3 px ring at 3.7 Hz, 25 frames a second, damping ratio 0.02, saved with OpenCV's MPEG-4 codec; Apple M3, 25
 November 2026), the fit reads 0.0276, with a warning that the halves differ (`make_test_clip.py sub.mp4 --fn 3.7
---zeta 0.02 --amplitude 0.3 --fps 25 --seconds 60`, then the command it prints). An independent audit's probes, not in
-this repository, found why: the tracker read 77 % of a 0.2 px swing but 26 % of a 0.04 px one; the same frames
-uncompressed read 0.0214, and blurring the picture before compression made it worse (0.030 and 0.037 at 1 and 2 px).
-The four real videos of the blind test did not show it, but any compressed video may, and neither d nor the precision
-printed sees it. Nor does d see a video whose end is quieter than the ring's surroundings (steadier light, someone
-gone from the room): d takes its noise from the quiet end. In the audit's simulation of a 0.06 px ring in 0.01 px of
-noise with the last 15 s ten times quieter, 29 of 40 rings passed the gate with d of 139-276, and 95 % of them read
-within 21 %, not 15 %. A damping ratio fitted below a pixel is best checked by a tap filmed closer, above the floor.
+--zeta 0.02 --amplitude 0.3 --fps 25 --seconds 60`, then the command it prints). Two independent audits' probes, not
+in this repository, found why: the tracker read less of a swing the smaller it was, about a third of a 0.04 px one;
+the same frames uncompressed read 0.0214, and blurring the picture before compression made it worse (0.030 and 0.037
+at 1 and 2 px). The four real videos of the blind test did not show it, but any compressed video may, and neither d
+nor the precision printed sees it. Nor does d see a video whose end is quieter than the ring's surroundings (steadier
+light, someone gone from the room): d takes its noise from the quiet end. In the audit's simulation of a 0.06 px ring
+in 0.01 px of noise with the last 15 s ten times quieter, 29 of 40 rings passed the gate with d of 139-276, and 95 %
+of them read within 21 %, not 15 %. A damping ratio fitted below a pixel is best checked by a tap filmed closer, above
+the floor.
 
 Anything that rings after the largest jolt is read, the camera included: a bump of the tripod near the end was taken
 for the ring (42 % of cases at 60 frames a second, all at 240). So keep the camera untouched until the reading's end,
@@ -196,7 +197,7 @@ evenly.
 | `--box` | 41 px | The square around each point whose corners are followed. It must lie on the part (or on the still object). |
 | `--min-peak` | 1 px, or ten times the jitter if that is larger | The smallest peak the damping is read from. A pixel is a safe target from test videos, where peaks under about a pixel came out up to 17 % low and bent the reading, not a physical limit; below the floor the script reads the frequency alone. Given, it replaces the default. |
 | `--plot` | none | Saves the swing, the peaks used and the floor. |
-| `--outline` | off | The part's point is on its outline against a plain background (a shaft, or another part whose surface turns and carries its texture away): the edge through it is followed across its 41 px width, not texture. Pick a stretch of edge with one clean step and nothing else within 12 px, such as a stripe of light, a key or a bolt head. The edge is searched for within 12 px of the point, and the script warns when it comes within 2 px of either end or of the frame's edge. It is placed to about a tenth of a pixel, not the hundredth texture gives: on the generated turning bar the damping ratio read 5 % high on a 5 px swing and 14 % high on a 3 px one (Apple M3, 25 November 2026), and below the floor the script gives the frequency alone. |
+| `--outline` | off | The part's point is on its outline against a plain background (a shaft, or another part whose surface turns and carries its texture away): the edge through it is followed across its 41 px width, not texture. Pick a stretch of edge with one clean step and nothing else within 12 px, such as a stripe of light, a key or a bolt head. The edge is searched for within 12 px of the point, and the script warns when it comes within 2 px of either end or of the frame's edge. It is placed to about a tenth of a pixel, not the hundredth texture gives: on the generated turning bar the damping ratio read 5 % high on a 5 px swing (`make_test_clip.py bar.mp4 --outline`) and 12-14 % high on 3 px ones (`--amplitude 3`, damping ratios 0.03 and 0.02; Apple M3, 25 November 2026), and below the floor the script gives the frequency alone. |
 
 The jitter is how much a point seems to move from one frame to the next, the tracker's noise: the still point's, or
 the settled swing's when a shaking camera makes the still point's larger. A video's compression can leave a still point
@@ -250,32 +251,32 @@ requirements.txt:
 - **Two resonances close together.** The decrement and the fit below a pixel assume one resonance. Where two share
   a band, the damping ratio can come out wrong either way: in one of the printer-bed videos the ring-down read almost
   no damping at 126 and 215 Hz, where the fit read 0.013 and 0.021; two simulated resonances 5 % apart (3.7 and
-  3.9 Hz, both at 0.01) beat and read 0.030-0.035 above a pixel and 0.042-0.044 below it, with no warning (the
-  audit's probe, not in this repository). The script warns when the first and second halves give damping ratios
-  further apart than their scatter allows, which beating does not always set off.
-- **Every surface.** The tracker needs texture, such as corners, bolts or a sticker; a turning part is followed by
-  its outline instead (`--outline`). Plain or shiny surfaces, glare, motion blur and flickering light are not covered
-  by the tests. The tap test has read six real videos, of a frame
-  struck with a hammer in the CAMELOT benchmark (Politecnico di Torino, https://doi.org/10.5281/zenodo.15119038,
-  CC BY 4.0), with accelerometers on the frame. It moved under a pixel, too little for the damping ratio peak by peak
-  (it is read below a pixel by a fit since; see above). Read up to 32 s, before
-  someone walks past the still point, four videos gave the frequency within 0.4-1.4 % of the accelerometer over
-  the same seconds, their ring 37-70 times the noise; the other two, at 3.8 and 2.0 times, were declined. Four more
-  videos of the same frame, unopened until the rule was frozen and the predictions written, all gave the frequency
-  within 1.2 % of the accelerometer over the same seconds, compared as displacement. The speed test read
-  six run-ups of a real rotor (Kang et al. 2024, Mendeley Data, https://doi.org/10.17632/47y7rwc2yg.1, CC BY 4.0)
-  filmed from about 2 m, whose critical speed the shaft's eddy-current probe puts at 35.4-35.8 Hz. Points chosen on
-  texture swung 0.1-0.2 px and were declined: their squares held the disk's face and the coupling's key, which turn
+  3.9 Hz, both at 0.01) beat and read anywhere from 0.010 to 0.044 depending on their phases, mostly high and mostly
+  with no warning, above a pixel and below it (two audits' probes, not in this repository). The script warns when the
+  first and second halves give damping ratios further apart than their scatter allows, which beating does not always
+  set off.
+- **Every surface.** The tracker needs texture, such as corners, bolts or a sticker; a turning part is followed by its
+  outline instead (`--outline`). Plain or shiny surfaces, glare, motion blur and flickering light are not covered by
+  the tests. The tap test has read six real videos, of a frame struck with a hammer in the CAMELOT benchmark
+  (Politecnico di Torino, https://doi.org/10.5281/zenodo.15119038, CC BY 4.0), with accelerometers on the frame. It
+  moved under a pixel, too little for the damping ratio peak by peak (it is read below a pixel by a fit since; see
+  above). Read up to 32 s, before someone walks past the still point, four videos gave the frequency within 0.4-1.4 %
+  of the accelerometer over the same seconds, their ring 37-70 times the noise; the other two, at 3.8 and 2.0 times,
+  were declined. Four more videos of the same frame, unopened until the rule was frozen and the predictions written,
+  all gave the frequency within 1.2 % of the accelerometer over the same seconds, compared as displacement. The speed
+  test read six run-ups of a real rotor (Kang et al. 2024, Mendeley Data, https://doi.org/10.17632/47y7rwc2yg.1, CC BY
+  4.0) filmed from about 2 m, whose critical speed the shaft's eddy-current probe puts at 35.4-35.8 Hz. Points chosen
+  on texture swung 0.1-0.2 px and were declined: their squares held the disk's face and the coupling's key, which turn
   with the rotor, and a still probe's stand. Measured on its edges, the rotor swings 1-2 px at the critical speed.
-  With `--outline` on the shaft's top edge at two places, all 12 readings fell within 1.7 % of the probe (Apple M3,
-  25 November 2026), 8 with the warning that the swing, barely over the floor, is not seen falling on either side and
-  6 with the warning that the edge came near the end of the 12 px searched. Before an edge found at the end of its
-  search was counted lost rather than held there (a fix from an independent audit, made on generated edges), 11 of 12
-  fell within 2.1 % and the twelfth read 10 % low. On the disk's top, 2 of 6 read right: a stripe of reflected light
-  7-9 px under its edge gave a second edge of the same kind. These readings are not blind: the probe's answers were
-  known and every run-up had been read before; the outline's settings were fixed on generated videos first. Unlike
-  the tap test, the speed test has no reading below a pixel. The real videos' points and the accelerometer and probe
-  processing are not in this repository, so these figures cannot be reproduced from it alone.
+  With `--outline` on the shaft's top edge at two places, all 12 readings fell within 1.7 % of the probe (Apple M3, 25
+  November 2026), 8 with the warning that the swing, barely over the floor, is not seen falling on either side. Before
+  an edge found at the end of its search was counted lost rather than held there (a fix from an independent audit,
+  made on generated edges), 11 of 12 fell within 2.1 % and the twelfth read 10 % low; the 3 readings that fix changed
+  now warn that the edge came near the end of the 12 px searched. On the disk's top, 2 of 6 read right: a stripe of
+  reflected light 7-9 px under its edge gave a second edge of the same kind. These readings are not blind: the probe's
+  answers were known and every run-up had been read before; the outline's settings were fixed on generated videos
+  first. Unlike the tap test, the speed test has no reading below a pixel. The real videos' points and the
+  accelerometer and probe processing are not in this repository, so these figures cannot be reproduced from it alone.
 - **The brightness reading** is a quick first look: on the printer bed it read 221 Hz for the resonance at 215 Hz,
   and at 264 Hz it found the frequency but read the damping 30 to 40 % low.
 

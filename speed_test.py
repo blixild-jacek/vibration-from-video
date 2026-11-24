@@ -13,8 +13,9 @@ passes the peak before the part has fully answered, so it reads low: by 0.1 to 1
 damping ratio: on the same coast-downs the width of the peak read it 3 to 29 % high or not at all, and a few speed
 steps cannot resolve the peak. Tap the part for that (free_decay.py).
 
-Usage: python3 speed_test.py FILM --part X Y --fixed X Y [--fps 240] [--plot response.png]
-       (without --part and --fixed, it saves the first frame with a pixel grid to read them from)
+Usage: python3 speed_test.py VIDEO --part X Y --fixed X Y [--fps 240] [--plot response.png] [--outline]
+       (without --part and --fixed, it saves the first frame with a pixel grid to read them from; --outline when the
+       part's point is on its outline, as on a turning shaft)
 
 SPDX-License-Identifier: MIT
 Copyright (c) 2026 Jacek Garbuliński Blixild, blixild.com

@@ -310,7 +310,7 @@ class Outline:
         bad = np.flatnonzero(~(inside[:-1] & inside[1:]))  # steps with a sample outside the frame
         self.lo = int(bad[bad < OUTLINE_REACH].max()) + 1 if (bad < OUTLINE_REACH).any() else 0
         self.hi = int(bad[bad >= OUTLINE_REACH].min()) - 1 if (bad >= OUTLINE_REACH).any() else 2 * OUTLINE_REACH - 1
-        self.ended = False  # whether the edge was ever found at lo or hi, where it may lie beyond the stretch
+        self.ended = None  # "lo" or "hi" once the edge was found at that end, where it may lie beyond the stretch
         d = self.steps(crop) if self.hi > self.lo else np.zeros(1)
         k = int(np.nanargmax(np.abs(d)))
         self.sign = 1.0 if d[k] > 0 else -1.0
@@ -341,14 +341,15 @@ class Outline:
 
     def position(self, crop):
         """The edge's position along the normal (px), sub-pixel: its strongest step of the first frame's sign,
-        refined by a parabola; NaN when the whole step is under half the first frame's (the edge hidden or gone), or
-        when the strongest step lies at lo or hi, where the edge may be beyond the stretch searched."""
+        refined by a parabola; NaN when the whole step is under half the first frame's (the edge hidden or gone, a
+        hand passing, a dark frame), or when a step that strong lies at lo or hi, where the edge may be beyond the
+        stretch searched."""
         d = self.sign * self.steps(crop)
         k = int(np.nanargmax(d))
-        if k <= self.lo or k >= self.hi:
-            self.ended = True
-            return float("nan")
         if self.step(d, k) < 0.5 * self.strength:
+            return float("nan")
+        if k <= self.lo or k >= self.hi:
+            self.ended = "lo" if k <= self.lo else "hi"
             return float("nan")
         a, b, c = d[k - 1], d[k], d[k + 1]
         return float(k + 0.5 * (a - c) / (a - 2 * b + c))
@@ -362,11 +363,13 @@ class Outline:
 
     def near_end(self):
         """Whether the edge came within OUTLINE_FAR px of lo or hi, or was found at one of them."""
-        return self.ended or self.low < self.lo + OUTLINE_FAR or self.high > self.hi - OUTLINE_FAR
+        return bool(self.ended) or self.low < self.lo + OUTLINE_FAR or self.high > self.hi - OUTLINE_FAR
 
     def room(self):
-        """How far (px) the edge could move from where it started, toward the end it went nearer, before near_end()."""
-        toward_hi = self.high - self.start >= self.start - self.low
+        """How far (px) the edge could move from where it was first found toward the end it came nearer (or was found
+        at), before near_end(); 0 when it was first found that close to an end (the point picked off the edge)."""
+        to_hi, to_lo = (self.hi - OUTLINE_FAR) - self.high, self.low - (self.lo + OUTLINE_FAR)
+        toward_hi = self.ended == "hi" if self.ended else to_hi < to_lo
         room = (self.hi - OUTLINE_FAR) - self.start if toward_hi else self.start - (self.lo + OUTLINE_FAR)
         return round(max(0.0, float(room)), 1)
 
@@ -376,7 +379,12 @@ def faint_warning(p):
                 "sharper detail, or add a sticker", x=p[0], y=p[1])
 
 
-def far_warning(p, reach=REACH):
+def far_warning(p, reach=REACH, outline=False):
+    if outline:  # Outline.near_end(): the edge near the end of the stretch searched, reach px from where it was found
+        return Note("far", f"the edge through ({p[0]}, {p[1]}) came within {OUTLINE_FAR} px of the end of the "
+                    f"{OUTLINE_REACH} px searched either side of the point, {reach} px from where it was first found: "
+                    "pick the point on the edge itself, and if the part swings that far, film from further away",
+                    x=p[0], y=p[1], reach=reach, outline=True)
     return Note("far", f"the part around ({p[0]}, {p[1]}) moved more than {reach} px, near the edge of the window the "
                 "tracker follows it in: film from further away", x=p[0], y=p[1], reach=reach)
 
@@ -406,7 +414,8 @@ def track(frames, points, box=BOX, report=False, outline=()):
         tracker.step(gray)
     if report:
         for p in tracker.far():
-            print(f"warning: {far_warning(p, tracker.far_limit(p))}")
+            edge = tracker.points.index(tuple(p)) in tracker.outline
+            print(f"warning: {far_warning(p, tracker.far_limit(p), edge)}")
         for p in tracker.mixed():
             print(f"warning: {mixed_warning(p)}")
     return tracker.shifts()
@@ -656,8 +665,9 @@ def faint(x, fps, lengths=FAINT_LENGTHS, quiet=FAINT_QUIET):
 # and compared as the peaks' halves are, since a structure's damping can change as its swing dies away. FIT_D and the
 # halves' bar come from simulated rings alone (faint_noise.py --damping), fixed before any unseen video was read.
 # d counts white noise only. It does not see a tracker's error that grows as the swing shrinks: a compressed video's
-# (on make_test_clip.py's clips the tracker read 77 % of a 0.2 px swing and 26 % of a 0.04 px one, so the fit reads the
-# damping high) or an outline point's (read() keeps outline points out of the fit). And it takes the noise from the
+# (on make_test_clip.py's compressed clips the tracker read less of a swing the smaller it was, about a third of a
+# 0.04 px one by two independent audits' probes, so the fit reads the damping high) or an outline point's (read() keeps
+# outline points out of the fit). And it takes the noise from the
 # video's quiet end, so an end quieter than the ring's surroundings raises d.
 FIT_BAND = (0.6, 1.5)
 FIT_ABOVE = 3.0  # the fit runs until the fitted envelope falls to this many times the band's noise
@@ -665,7 +675,7 @@ FIT_CYCLES = 8  # the fewest cycles fitted
 FIT_HALVES = (3.0, 0.2)  # the halves differ: by more than this many combined standard errors and this share
 FIT_D = 30.0  # the ring-down's d below which the damping ratio is not read: on simulated rings (faint_noise.py
               # --damping, its table by band of d), 95 % of fits with d of 30 to 50 lay within 13.4 % of the damping
-              # ratio set, of 20 to 30 within 17.3 %: from 30, a reading at the gate is within 15 % in 95 % of cases
+              # ratio set, of 20 to 30 within 17.3 %: from 30 up, every band of its table reads 95 % within 15 %
 
 
 def wave(t, a, decay, hz, phase, offset):
@@ -857,9 +867,9 @@ def read(part, fixed, fps, min_peak=None, outline=False):
                 notes.append(Note("damping-changes", f"the first and second halves of those {fitted:.1f} s give damping "
                                   f"ratios of {halves[0]:.4f} and {halves[1]:.4f}, further apart than their scatter "
                                   "allows: the damping may change as the swing dies away, as a bolted structure's "
-                                  "does, or the tracker read the smaller swings short (a compressed video can); give "
-                                  "the damping ratio with the stretch it was read over", z1=halves[0], z2=halves[1],
-                                  seconds=fitted))
+                                  "does, two resonances may beat, or the tracker read the smaller swings short (a "
+                                  "compressed video can); give the damping ratio with the stretch it was read over",
+                                  z1=halves[0], z2=halves[1], seconds=fitted))
             readings = (fd, fd / np.sqrt(1 - zeta ** 2), zeta, decrement, np.array([], int), notes)
             span = slice(start, start + int(round(fitted * fps)))
         else:
