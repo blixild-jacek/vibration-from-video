@@ -619,6 +619,16 @@ class BelowAPixel(unittest.TestCase):
         note = [w for w in warnings if w.code == "frequency-only"][0]
         self.assertGreaterEqual(note.values["ratio"], free_decay.FAINT_RATIO)
 
+    def test_an_outline_point_below_the_floor_gives_the_frequency_alone(self):
+        # an outline point's edge is placed too coarsely for a fit below the floor: on make_test_clip.py's turning bar a
+        # 0.6 px ring read 0.054 for 0.02 there, with no warning
+        part, fixed, fps = self.film(30, seconds=60.0)
+        x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, fixed, fps, outline=True)
+        self.assertAlmostEqual(fd, 3.7 * np.sqrt(1 - 0.02 ** 2), delta=0.01 * 3.7)
+        self.assertTrue(np.isnan(zeta) and len(peaks) == 0)
+        note = [w for w in warnings if w.code == "frequency-only"][0]
+        self.assertTrue(note.values["outline"])  # a page words why by its values
+
     def test_a_damping_that_changes_as_the_swing_dies_away_is_flagged(self):
         fps, hz = 25.0, 3.7
         t = np.arange(int(60 * fps)) / fps - 5.0
@@ -686,8 +696,8 @@ class OutlinePoint(unittest.TestCase):
             speed_test.read(part, fixed, fps)
 
     def test_the_edge_is_placed_to_about_a_tenth_of_a_pixel(self):
-        # the turning surface's texture just inside the outline slides past it and moves the edge a little: 0.06 to
-        # 0.11 px RMS on this clip, sharp or blurred (the corner tracker on texture: about a hundredth)
+        # the turning surface's texture just inside the outline slides past it and moves the edge a little: about a
+        # tenth of a pixel RMS on this clip (the corner tracker on texture: about a hundredth)
         fps, part, fixed = self.shifts(self.tap)
         t = np.arange(len(part)) / fps
         truth = make_test_clip.ring_down(2.0, 0.03, 2.0)(t)
@@ -699,6 +709,47 @@ class OutlinePoint(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             free_decay.Tracker(frame, [(300, 300)], outline=(0,))
         self.assertEqual(e.exception.args[0].code, "outline")
+
+    @staticmethod
+    def edge_frame(edge, height=200, width=200):
+        """A frame with a straight edge across it at row `edge` (sub-pixel): gray 200 above it, 50 below."""
+        rows = np.arange(height)[:, None]
+        return np.repeat(50 + 150 * np.clip(edge - rows, 0, 1), width, axis=1).astype(np.uint8)
+
+    def follow(self, point, moves, height=200):
+        """An outline point at point, on an edge at row 100 that then moves down by each of moves (px): the tracker,
+        and the point's shift read in each later frame."""
+        tracker = free_decay.Tracker(self.edge_frame(100.0, height), [point], outline=(0,))
+        for move in moves:
+            tracker.step(self.edge_frame(100.0 + move, height))
+        return tracker, tracker.shifts()[0][1:, 1]
+
+    def test_an_edge_is_followed_until_it_leaves_the_stretch_searched(self):
+        moves = np.arange(0.5, 9.0, 0.5)
+        tracker, read = self.follow((100, 94), moves)  # picked 6 px off the edge: 4 px of room toward the stretch's end
+        np.testing.assert_allclose(read[moves <= 5], moves[moves <= 5], atol=0.05)
+        self.assertTrue(np.isnan(read[moves >= 7]).all())  # beyond the stretch: lost, not held at its end
+        self.assertEqual(tracker.far(), [(100, 94)])
+        self.assertEqual(tracker.far_limit((100, 94)), 4.0)
+
+    def test_an_edge_at_the_frame_border_is_lost_not_held(self):
+        moves = np.arange(0.5, 7.5, 0.5)
+        tracker, read = self.follow((100, 100), moves, height=105)  # the frame ends 5 px below the edge
+        found = np.isfinite(read)
+        np.testing.assert_allclose(read[found], moves[found], atol=0.05)
+        self.assertTrue(np.isnan(read[moves >= 5]).all())
+        self.assertEqual(tracker.far(), [(100, 100)])
+
+    def test_a_swing_inside_the_stretch_is_not_warned_about(self):
+        moves = np.r_[np.arange(0.5, 9.5, 0.5), -np.arange(0.5, 9.5, 0.5)]
+        tracker, read = self.follow((100, 100), moves)
+        np.testing.assert_allclose(read, moves, atol=0.05)
+        self.assertEqual(tracker.far(), [])
+
+    def test_a_clip_whose_edge_would_leave_the_stretch_is_refused(self):
+        with self.assertRaises(SystemExit):
+            make_test_clip.make(str(Path(self.tmp.name) / "wide.mp4"), amplitude=make_test_clip.OUTLINE_SWING + 1,
+                                outline=True)
 
 
 if __name__ == "__main__":

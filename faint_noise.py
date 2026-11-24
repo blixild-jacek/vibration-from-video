@@ -150,49 +150,50 @@ def damping_rows(rng, count, zetas=(0.005, 0.01, 0.02, 0.05), rings=(10, 20, 50,
     return np.array(rows, dtype=float)
 
 
+D_BANDS = (5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000, np.inf)  # bands of d for damping_table()
+
+
 def damping_table(rng, count, within=0.15, share=0.95):
-    """The gate for faint_damping(): for d (the ring-down's signal-to-noise figure) and for the fit's own relative
-    standard error, the bar at which `share` of the readings past it lie within `within` of the damping ratio the ring
-    was made with, and how many readings each bar keeps; and the halves' false alarms on these clean rings."""
+    """The gate for faint_damping() (free_decay.FIT_D): for each band of d (the ring-down's signal-to-noise figure),
+    how close `share` of its readings lie to the damping ratio the ring was made with, and the gate: the lowest band
+    from which every band reads `share` of its rings within `within`, so a reading just past the gate is as good as the
+    bar says, not only the readings past it taken together (which the cumulative table shows, and which pass from far
+    lower d); and the halves' false alarms on these clean rings."""
     rows = damping_rows(rng, count)
     d, rel, err, halves = rows[:, 5], rows[:, 6], np.abs(rows[:, 7]), rows[:, 8].astype(bool)
     print(f"Damping below the floor: {len(rows)} simulated rings found by faint(), {np.isfinite(err).sum()} fitted")
-    print("bar on d       kept   95 % within")
-    best_d = None
-    for bar in (5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000):
+    print("band of d          rings   95 % within")
+    band_q = {}
+    for lo, hi in zip(D_BANDS, D_BANDS[1:]):
+        m = (d >= lo) & (d < hi)
+        band_q[lo] = np.quantile(err[m], share) if m.any() else np.nan
+        print(f"  {lo:5g} to {hi:<6g}  {m.sum():6d}  {100 * band_q[lo]:6.1f} %")
+    best_d = next((lo for lo in D_BANDS[:-1] if not any(q > within for b, q in band_q.items() if b >= lo)), None)
+    print("cumulative: bar on d    kept   95 % within")
+    for bar in D_BANDS[:-1]:
         keep = d >= bar
         q = np.quantile(err[keep], share) if keep.any() else np.nan
-        print(f"  d >= {bar:5g}  {keep.sum():6d}  {100 * q:6.1f} %")
-        if best_d is None and q <= within and all(np.quantile(err[d >= b2], share) <= within
-                                                  for b2 in (5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000)
-                                                  if b2 > bar and (d >= b2).any()):
-            best_d = bar
-    print("bar on the fit's own relative error   kept   95 % within")
-    best_rel = None
+        print(f"  d >= {bar:5g}  {keep.sum():12d}  {100 * q:6.1f} %")
+    print("cumulative: bar on the fit's own relative error (for comparison)   kept   95 % within")
     for bar in (0.30, 0.20, 0.15, 0.10, 0.07, 0.05, 0.03, 0.02, 0.01):
         keep = rel <= bar
         q = np.quantile(err[keep], share) if keep.any() else np.nan
         print(f"  rel <= {bar:4.2f}  {keep.sum():6d}  {100 * q:6.1f} %")
-        if best_rel is None and q <= within and all(np.quantile(err[rel <= b2], share) <= within
-                                                    for b2 in (0.30, 0.20, 0.15, 0.10, 0.07, 0.05, 0.03, 0.02, 0.01)
-                                                    if b2 < bar and (rel <= b2).any()):
-            best_rel = bar
-    for name, keep in (("d", d >= (best_d or np.inf)), ("rel", rel <= (best_rel or -1))):
-        print(f"gate on {name}: keeps {keep.sum()} of {len(rows)}; halves differ on {halves[keep].mean():.1%} of the kept"
-              if keep.any() else f"gate on {name}: none passes")
+    keep = d >= (best_d if best_d is not None else np.inf)
+    print(f"gate on d: {best_d}, from which every band reads {share:.0%} within {within:.0%}; keeps {keep.sum()} of "
+          f"{len(rows)}; halves differ on {halves[keep].mean():.1%} of the kept" if keep.any() else "gate on d: none")
     print("halves: false alarms on these clean rings, by the bars (combined standard errors, share of the mean)")
     for sig in (3.0, 4.0, 5.0):
         print(f"  {sig:g} sigma: " + "  ".join(f"share {sh:.1f}: {np.mean((rows[:, 9] > sig) & (rows[:, 10] > sh)):5.1%}"
                                              for sh in (0.2, 0.3, 0.4, 0.5)))
     print("by case at the d gate (kept / found, 95 % within):")
-    keep = d >= (best_d or np.inf)
     for hz, fps in DAMPING_CASES:
         for zeta in (0.005, 0.01, 0.02, 0.05):
             m = (rows[:, 0] == hz) & (rows[:, 2] == zeta)
             k = m & keep
             q = f"{100 * np.quantile(err[k], share):5.1f} %" if k.any() else "    -"
             print(f"  {hz:5g} Hz {fps:4g} fps zeta {zeta:5.3f}: {k.sum():4d} / {m.sum():4d}  {q}")
-    return best_d, best_rel
+    return best_d
 
 
 def main():

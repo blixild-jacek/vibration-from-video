@@ -9,7 +9,7 @@ flow, checked forwards and backwards), measures the swing in pixels, and reads:
   - for a swing too small for the peaks (fewer than three rise above the floor), the frequency from the spectrum of
     the ring after the strike, when it stands out of the video's own noise at its quiet end, and the damping ratio
     from a decaying wave fitted to every frame of that ring, when it stands far enough out of the noise (its d
-    reaches FIT_D); else the frequency alone.
+    reaches FIT_D); else the frequency alone (and always for an outline point, --outline).
 Neither result needs millimeters: frequency comes from time, damping from a ratio of peaks or a fitted decay.
 
 Usage:
@@ -17,6 +17,7 @@ Usage:
                                                               the two points from
   python3 free_decay.py VIDEO --pick                          click the two points in a window (needs a desktop)
   python3 free_decay.py VIDEO --part X Y --fixed X Y [--fps 240] [--plot swing.png]
+  python3 free_decay.py VIDEO --part X Y --fixed X Y --outline   the part's point on its outline (a turning shaft)
 
 SPDX-License-Identifier: MIT
 Copyright (c) 2026 Jacek Garbuliński Blixild, blixild.com
@@ -45,11 +46,14 @@ MARGIN = 256
 # stays put in the picture and moves only as the part does. The edge through the point is found in the first frame
 # (its normal from the gradients in the square, its strongest step along that normal), and in every frame its
 # sub-pixel position along the normal, from the brightness profile across it averaged over the square's width. Only
-# motion across the edge is seen: motion along it is not. On a test clip of a turning bar, whose surface texture slides
-# past just inside the outline, the edge was placed to 0.06-0.11 px RMS, sharp or blurred, against the corner tracker's
-# hundredth of a pixel on texture: an outline point suits swings of a pixel or more, as the speed test reads.
-OUTLINE_REACH = 12  # px either side of the edge's first position along its normal that are searched for it
-OUTLINE_STOP = 8.0  # grey levels per px: a weaker step is no outline to follow
+# motion across the edge is seen: motion along it is not. On make_test_clip.py's turning bar, whose surface texture
+# slides past just inside the outline, the edge was placed to about a tenth of a pixel RMS (an independent audit
+# measured 0.11 px with the edge sharp or blurred by 1 px, 0.34 px blurred by 2 px), against the corner tracker's
+# hundredth of a pixel on texture, and its error depends on where the edge falls within a pixel. So an outline point
+# suits swings of a pixel or more, as the speed test reads; below the floor it gives the frequency alone (read()).
+OUTLINE_REACH = 12  # px either side of the point along the edge's normal that are searched for the edge
+OUTLINE_FAR = 2  # px: an edge this close to either end of the stretch searched, or of the frame, is warned about
+OUTLINE_STOP = 8.0  # gray levels: the edge's whole step (Outline.step()) below which there is no outline to follow
 OUTLINE_STRAIGHT = 0.5  # the gradients' coherence in the square, 0 (no one direction) to 1 (a straight edge)
 REACH = MARGIN - 100
 # px a point may move from one frame to the next before the tracker is likely to lose it: half the reach of a 21 px
@@ -259,12 +263,16 @@ class Tracker:
 
     def far(self):
         """The points that moved more than REACH px from where they started, near the edge of their window, where
-        the tracker may lose them (an outline point: OUTLINE_REACH less 2 px, near the end of its profile)."""
-        return [p for p, r in zip(self.points, self.reach) if len(r) and r.max() > self.far_limit(p)]
+        the tracker may lose them; an outline point whose edge came within OUTLINE_FAR px of either end of the stretch
+        searched for it (Outline.near_end())."""
+        return [p for i, (p, r) in enumerate(zip(self.points, self.reach))
+                if (self.outline[i].near_end() if i in self.outline else len(r) and r.max() > REACH)]
 
     def far_limit(self, p):
-        """How far (px) point p may move before far() warns: REACH, or OUTLINE_REACH less 2 for an outline point."""
-        return OUTLINE_REACH - 2 if self.points.index(tuple(p)) in self.outline else REACH
+        """How far (px) point p could move before far() warns: REACH, or for an outline point the room its edge had,
+        from where it started to the end of the stretch it came near (Outline.room())."""
+        i = self.points.index(tuple(p))
+        return self.outline[i].room() if i in self.outline else REACH
 
     def mixed(self):
         """The points whose square holds corners that moved and corners that stayed still, which suggests it covers
@@ -279,10 +287,12 @@ class Tracker:
 
 class Outline:
     """The edge through an outline point (OUTLINE_REACH and the constants above it): found in the first frame's window
-    around the point, then its shift along its normal in each later window."""
+    around the point, then its shift along its normal in each later window. The edge is searched for between lo and
+    hi (indices of the profile's steps): the stretch of OUTLINE_REACH px either side of the point, cut short where it
+    leaves the frame, whose last row would otherwise be repeated and hold the edge there."""
 
-    def __init__(self, crop, centre, half, point):
-        cx, cy = centre
+    def __init__(self, crop, center, half, point):
+        cx, cy = center
         square = crop[max(cy - half, 0):cy + half + 1, max(cx - half, 0):cx + half + 1].astype(np.float32)
         gx, gy = cv2.Sobel(square, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(square, cv2.CV_32F, 0, 1, ksize=3)
         tensor = np.array([[(gx * gx).sum(), (gx * gy).sum()], [(gx * gy).sum(), (gy * gy).sum()]])
@@ -295,42 +305,70 @@ class Outline:
         xs = cx + steps[:, None] * self.normal[0] + width[None, :] * along[0]
         ys = cy + steps[:, None] * self.normal[1] + width[None, :] * along[1]
         self.maps = (xs.astype(np.float32), ys.astype(np.float32))
-        d = np.diff(self.profile(crop))
-        k = int(np.argmax(np.abs(d)))
+        h, w = crop.shape
+        inside = (xs[:, half] >= 0) & (xs[:, half] <= w - 1) & (ys[:, half] >= 0) & (ys[:, half] <= h - 1)
+        bad = np.flatnonzero(~(inside[:-1] & inside[1:]))  # steps with a sample outside the frame
+        self.lo = int(bad[bad < OUTLINE_REACH].max()) + 1 if (bad < OUTLINE_REACH).any() else 0
+        self.hi = int(bad[bad >= OUTLINE_REACH].min()) - 1 if (bad >= OUTLINE_REACH).any() else 2 * OUTLINE_REACH - 1
+        self.ended = False  # whether the edge was ever found at lo or hi, where it may lie beyond the stretch
+        d = self.steps(crop) if self.hi > self.lo else np.zeros(1)
+        k = int(np.nanargmax(np.abs(d)))
         self.sign = 1.0 if d[k] > 0 else -1.0
         self.strength = self.step(self.sign * d, k)
-        if self.strength < OUTLINE_STOP or straight < OUTLINE_STRAIGHT:
+        self.start = self.position(crop) if self.strength >= OUTLINE_STOP else float("nan")
+        if not np.isfinite(self.start) or straight < OUTLINE_STRAIGHT:
             raise SystemExit(Note("outline", f"no clear outline through ({point[0]}, {point[1]}) to follow: pick a "
                                   "point on a straight stretch of the part's edge against a plain background",
                                   x=point[0], y=point[1]))
-        self.start = self.position(crop)
+        self.low = self.high = self.start  # the edge's lowest and highest positions found
 
     def profile(self, crop):
         """The brightness across the edge, averaged along it (one value a px along the normal)."""
         return cv2.remap(crop.astype(np.float32), *self.maps, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE).mean(1)
+
+    def steps(self, crop):
+        """The profile's step from each px to the next (gray levels), NaN outside lo to hi."""
+        d = np.diff(self.profile(crop))
+        d[:self.lo], d[self.hi + 1:] = np.nan, np.nan
+        return d
 
     @staticmethod
     def step(d, k):
         """The edge's whole step in brightness around its steepest sample k: the rise over two samples either side,
         which does not depend on where within a pixel the edge falls (a sharp edge's step can sit in one sample or
         be shared by two)."""
-        return float(np.clip(d[max(k - 2, 0):k + 3], 0, None).sum())
+        return float(np.nansum(np.clip(d[max(k - 2, 0):k + 3], 0, None)))
 
     def position(self, crop):
         """The edge's position along the normal (px), sub-pixel: its strongest step of the first frame's sign,
-        refined by a parabola; NaN when the whole step is under half the first frame's (the edge hidden or gone)."""
-        d = self.sign * np.diff(self.profile(crop))
-        k = int(np.argmax(d))
+        refined by a parabola; NaN when the whole step is under half the first frame's (the edge hidden or gone), or
+        when the strongest step lies at lo or hi, where the edge may be beyond the stretch searched."""
+        d = self.sign * self.steps(crop)
+        k = int(np.nanargmax(d))
+        if k <= self.lo or k >= self.hi:
+            self.ended = True
+            return float("nan")
         if self.step(d, k) < 0.5 * self.strength:
             return float("nan")
-        if 0 < k < len(d) - 1:
-            a, b, c = d[k - 1], d[k], d[k + 1]
-            k = k + 0.5 * (a - c) / (a - 2 * b + c)
-        return float(k)
+        a, b, c = d[k - 1], d[k], d[k + 1]
+        return float(k + 0.5 * (a - c) / (a - 2 * b + c))
 
     def shift(self, crop):
         """The point's shift since the first frame (px, x and y): along the normal by the edge's move."""
-        return (self.position(crop) - self.start) * self.normal
+        position = self.position(crop)
+        if np.isfinite(position):
+            self.low, self.high = min(self.low, position), max(self.high, position)
+        return (position - self.start) * self.normal
+
+    def near_end(self):
+        """Whether the edge came within OUTLINE_FAR px of lo or hi, or was found at one of them."""
+        return self.ended or self.low < self.lo + OUTLINE_FAR or self.high > self.hi - OUTLINE_FAR
+
+    def room(self):
+        """How far (px) the edge could move from where it started, toward the end it went nearer, before near_end()."""
+        toward_hi = self.high - self.start >= self.start - self.low
+        room = (self.hi - OUTLINE_FAR) - self.start if toward_hi else self.start - (self.lo + OUTLINE_FAR)
+        return round(max(0.0, float(room)), 1)
 
 
 def faint_warning(p):
@@ -456,7 +494,7 @@ def damping(x, fps, fd, floor):
     """Damping ratio, logarithmic decrement, the peaks used, and with eight peaks or more the decrements of their first
     and second halves and whether they differ by more than three times their combined standard error and by more than
     a fifth, as they do when two resonances share the swing or the part is not one linear resonance (None with fewer
-    peaks). Neighbouring peaks share troughs and their small errors are correlated, so the standard errors alone come
+    peaks). Neighboring peaks share troughs and their small errors are correlated, so the standard errors alone come
     out too small: a clean ring was called bent in most sampling phases without the fifth.
 
     Each swing's amplitude is half the drop from an upper peak to the troughs either side, so a rest position that is
@@ -617,13 +655,17 @@ def faint(x, fps, lengths=FAINT_LENGTHS, quiet=FAINT_QUIET):
 # stands only when the ring-down's d (signal_to_noise()) reaches FIT_D, and the stretch's two halves are fitted apart
 # and compared as the peaks' halves are, since a structure's damping can change as its swing dies away. FIT_D and the
 # halves' bar come from simulated rings alone (faint_noise.py --damping), fixed before any unseen video was read.
+# d counts white noise only. It does not see a tracker's error that grows as the swing shrinks: a compressed video's
+# (on make_test_clip.py's clips the tracker read 77 % of a 0.2 px swing and 26 % of a 0.04 px one, so the fit reads the
+# damping high) or an outline point's (read() keeps outline points out of the fit). And it takes the noise from the
+# video's quiet end, so an end quieter than the ring's surroundings raises d.
 FIT_BAND = (0.6, 1.5)
 FIT_ABOVE = 3.0  # the fit runs until the fitted envelope falls to this many times the band's noise
 FIT_CYCLES = 8  # the fewest cycles fitted
 FIT_HALVES = (3.0, 0.2)  # the halves differ: by more than this many combined standard errors and this share
 FIT_D = 30.0  # the ring-down's d below which the damping ratio is not read: on simulated rings (faint_noise.py
-              # --damping), 95 % of fits with d of 30 to 50 lay within 13.4 % of the damping ratio set, of 20 to 30
-              # within 17.3 %: from 30, a reading at the gate is within 15 % in 95 % of cases
+              # --damping, its table by band of d), 95 % of fits with d of 30 to 50 lay within 13.4 % of the damping
+              # ratio set, of 20 to 30 within 17.3 %: from 30, a reading at the gate is within 15 % in 95 % of cases
 
 
 def wave(t, a, decay, hz, phase, offset):
@@ -776,12 +818,14 @@ def lost_note(part, fixed, span=None):
     return None
 
 
-def read(part, fixed, fps, min_peak=None):
+def read(part, fixed, fps, min_peak=None, outline=False):
     """The swing, the tracker's jitter, the floor and measure()'s readings, from the two points' shifts: what the
     script prints, for the command line and for a page that runs it. When the swing is too small for the damping ratio,
     the frequency from faint(), and the damping ratio from faint_damping() with a "damping-fit" note when its d reaches
     FIT_D, or else NaN with a "frequency-only" note (no peaks either way); when no ring stands out, measure()'s
-    refusal."""
+    refusal. outline: the part's point is an outline point (Outline), whose edge is placed too coarsely for a fit below
+    the floor (a 0.6 px ring on make_test_clip.py's turning bar read 0.054 for 0.02, with no warning): the frequency
+    alone there, its note's values saying why (outline True)."""
     if len(part) < 12:
         raise ValueError(Note("few-swings", "too few frames to find a frequency: film longer"))
     x = swing(part, fixed)
@@ -798,30 +842,35 @@ def read(part, fixed, fps, min_peak=None):
         if lost[start:end].any() or lost[len(lost) - FAINT_QUIET * (end - start):].any():
             raise  # a gap bridged by a straight line can make a quiet end look flat, or a ring
         quiet = noise_in(drift_off(x, fps)[len(x) - FAINT_QUIET * (end - start):])
-        fit = faint_damping(x, fps, fd, start, end, quiet)
+        fit = None if outline else faint_damping(x, fps, fd, start, end, quiet)
         if fit and fit[1] >= FIT_D:  # the damping ratio from a decaying wave fitted to the ring
             zeta, d, halves, _, fitted, (amp, rate) = fit
             decrement = 2 * np.pi * zeta / np.sqrt(1 - zeta ** 2)
             from_s, to_s = start / fps, start / fps + fitted  # seconds into the frames read, as a chart's axis
             notes = [Note("damping-fit", f"{SMALL[why].format(floor=floor)}, so the damping ratio is read not peak by "
-                          f"peak but from a decaying wave fitted to every frame from {from_s:.1f} to {to_s:.1f} s, the "
-                          f"{fitted:.1f} s after the strike where the ring stands out of the noise (its ring-down's d is "
-                          f"{d:.0f}, where {FIT_D:g} is needed)", why=why, floor=floor, seconds=fitted, d=d,
-                          needed=FIT_D, start=start, end=end, from_s=from_s, to_s=to_s, amp=amp, decay=rate)]
+                          f"peak but from a decaying wave fitted to every frame from {from_s:.1f} to {to_s:.1f} s of the "
+                          f"frames read, the {fitted:.1f} s after the strike where the ring stands out of the noise (its "
+                          f"ring-down's d is {d:.0f}, where {FIT_D:g} is needed)", why=why, floor=floor,
+                          seconds=fitted, d=d, needed=FIT_D, start=start, end=end, from_s=from_s, to_s=to_s, amp=amp,
+                          decay=rate)]
             if halves and halves[2]:
                 notes.append(Note("damping-changes", f"the first and second halves of those {fitted:.1f} s give damping "
                                   f"ratios of {halves[0]:.4f} and {halves[1]:.4f}, further apart than their scatter "
-                                  "allows: the damping changes as the swing dies away, as in a bolted structure, so "
-                                  "give the damping ratio with the stretch it was read over", z1=halves[0], z2=halves[1],
+                                  "allows: the damping may change as the swing dies away, as a bolted structure's "
+                                  "does, or the tracker read the smaller swings short (a compressed video can); give "
+                                  "the damping ratio with the stretch it was read over", z1=halves[0], z2=halves[1],
                                   seconds=fitted))
             readings = (fd, fd / np.sqrt(1 - zeta ** 2), zeta, decrement, np.array([], int), notes)
             span = slice(start, start + int(round(fitted * fps)))
         else:
             readings = (fd, fd, float("nan"), float("nan"), np.array([], int), [Note(
                 "frequency-only", f"only the frequency is read: {SMALL[why].format(floor=floor)}, too few for the "
-                f"damping ratio, but the {seconds:g} s after the strike stand {ratio:.1f} times above the video's quiet "
+                "damping ratio" + (", and an outline point's edge is placed too coarsely for one fitted below the floor"
+                                   if outline else "") +
+                f", but the {seconds:g} s after the strike stand {ratio:.1f} times above the video's quiet "
                 f"end, where {FAINT_RATIO:g} is needed. For the damping ratio, film closer or tap harder",
-                why=why, floor=floor, seconds=seconds, ratio=ratio, start=start, end=end, needed=FAINT_RATIO)])
+                why=why, floor=floor, seconds=seconds, ratio=ratio, start=start, end=end, needed=FAINT_RATIO,
+                outline=bool(outline))])
             span = slice(start, end)
     else:
         peaks, period = readings[4], fps / readings[0]
@@ -905,7 +954,8 @@ def main():
     if timing:
         print(f"warning: {timing}")
     try:
-        x, noise, floor, (fd, fn, zeta, decrement, peaks, warnings) = read(part, fixed, fps, args.min_peak)
+        x, noise, floor, (fd, fn, zeta, decrement, peaks, warnings) = read(part, fixed, fps, args.min_peak,
+                                                                           outline=args.outline)
     except ValueError as e:
         raise SystemExit(str(e))
     print(f"frames {len(x)} at {fps:g} fps" + ("" if args.fps is None else f" (the file stores {stored:g})") +
@@ -913,8 +963,8 @@ def main():
     if np.isnan(zeta):
         print(f"damped natural frequency {fd:.5f} Hz; the damping ratio is not read")
     else:
-        print(f"damped natural frequency {fd:.5f} Hz; natural frequency {fn:.5f} Hz")  # five decimals, as the page:
-        # the two part by about fn zeta^2 / 2, under a thousandth of a hertz at a few percent
+        print(f"damped natural frequency {fd:.5f} Hz; natural frequency {fn:.5f} Hz")  # five decimals: the two
+        # differ by about fn zeta^2 / 2, 0.0009 Hz at 2 Hz and 3 %, which three decimals would hide
         print(f"logarithmic decrement {decrement:.4f}; damping ratio {zeta:.4f} " +
               (f"(from {len(peaks)} peaks)" if len(peaks) else "(from a decaying wave fitted below the floor)"))
     snr = signal_to_noise(x, fps, floor, (fd, fn, zeta, decrement, peaks, warnings))

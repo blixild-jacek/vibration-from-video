@@ -12,26 +12,35 @@ bending, glare, motion blur, flickering light and lens distortion.
 Usage: python3 make_test_clip.py [OUT.mp4] [--fn 2.0] [--zeta 0.03] [--fps 60] [--seconds 15]
        python3 make_test_clip.py OUT.mp4 --fn 12 --zeta 0.02 --fps 240 --seconds 12 --coast-down 18 7
        python3 make_test_clip.py OUT.mp4 --fn 12 --zeta 0.02 --fps 240 --seconds 18 --steps 9 10 11 12 13 14 15
+       python3 make_test_clip.py OUT.mp4 --outline [...]   a turning bar, to be read by its outline (a 5 px swing)
        then run the command it prints.
 
 SPDX-License-Identifier: MIT
 Copyright (c) 2026 Jacek Garbuliński Blixild, blixild.com
 """
 import argparse
+import os
+import sys
 
 import cv2
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # free_decay beside this file, also under python3 -I
+from free_decay import OUTLINE_FAR, OUTLINE_REACH  # noqa: E402
+
 TIP = (424, 240)    # the middle of the swinging patch at rest, px; the first frame shows it a full swing lower
 FIXED = (104, 84)   # the middle of the patch that does not move, px
 SPIN = 7            # px a frame the turning bar's surface slides sideways (outline=True)
+OUTLINE_SWING = OUTLINE_REACH - OUTLINE_FAR - 1  # px: the largest swing of the turning bar, whose edge then stays
+# inside the stretch an outline point at rest searches, short of where the far warning starts
 
 
 
 LEAD = 120.0  # s: the longest steady run driven() integrates before the video starts
 
 def outline_point(scale=1):
-    """A point on the turning bar's top edge at rest (outline=True), px."""
+    """A point on the turning bar's top edge at rest (outline=True), px: the edge swings either side of it, by up to
+    OUTLINE_SWING px."""
     return TIP[0] * scale, (TIP[1] - 24) * scale
 
 
@@ -102,6 +111,9 @@ def make(out, fn=2.0, zeta=0.03, amplitude=40.0, fps=60.0, seconds=15.0, noise=2
     if not (fn > 0 and 0 < zeta < 1 and 0 < amplitude <= 150 and fps > 0 and seconds > 0):
         raise SystemExit("needs a natural frequency above 0, a damping ratio between 0 and 1, a first swing of up to "
                          "150 px, and a frame rate and length above 0")
+    if outline and amplitude > OUTLINE_SWING:
+        raise SystemExit(f"an outline point searches for its edge within {OUTLINE_REACH} px: give the turning bar a "
+                         f"swing of {OUTLINE_SWING} px or less (--amplitude)")
     if coast and not (coast[0] > coast[1] > 0):
         raise SystemExit("a coast-down needs a start frequency above its end frequency, both above 0")
     if speeds is not None and not (len(speeds) and min(speeds) > 0):
@@ -147,7 +159,7 @@ def main():
     ap.add_argument("out", nargs="?", default="test_clip.mp4")
     ap.add_argument("--fn", type=float, default=2.0, help="natural frequency, Hz")
     ap.add_argument("--zeta", type=float, default=0.03, help="damping ratio")
-    ap.add_argument("--amplitude", type=float, default=40.0, help="first swing, pixels")
+    ap.add_argument("--amplitude", type=float, help="first swing, pixels (40; 5 with --outline)")
     ap.add_argument("--fps", type=float, default=60.0)
     ap.add_argument("--seconds", type=float, default=15.0)
     ap.add_argument("--noise", type=float, default=2.0, help="sensor noise, gray levels")
@@ -161,6 +173,8 @@ def main():
     args = ap.parse_args()
     if args.scale < 1:
         ap.error("--scale must be 1 or more")
+    if args.amplitude is None:
+        args.amplitude = 5.0 if args.outline else 40.0
     make(args.out, args.fn, args.zeta, args.amplitude, args.fps, args.seconds, args.noise, args.coast_down, args.steps,
          args.scale, args.outline)
     print(f"{args.out}: natural frequency {args.fn} Hz, damping ratio {args.zeta}, {args.fps:g} fps, "
