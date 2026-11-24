@@ -676,8 +676,8 @@ def main():
         print(f"logarithmic decrement {decrement:.4f}; damping ratio {zeta:.4f} (from {len(peaks)} peaks)")
     snr = signal_to_noise(x, fps, floor, (fd, fn, zeta, decrement, peaks, warnings))
     print(f"signal-to-noise: the first swing, {snr['first']:.2f} px, is {snr['ratio']:.0f} times the swing's noise, "
-          f"{snr['noise']:.3f} px" + (f"; noise alone allows at best +-{100 * snr['frequency']:.2f} % in the "
-                                      f"frequency and +-{100 * snr['damping']:.1f} % in the damping ratio"
+          f"{snr['noise']:.3f} px" + (f"; noise alone allows at best +-{100 * snr['frequency']:.2g} % in the "
+                                      f"frequency and +-{100 * snr['damping']:.2g} % in the damping ratio"
                                       if "d" in snr else ""))
     for w in warnings:
         print(f"warning: {w}")
