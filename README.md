@@ -220,9 +220,9 @@ requirements.txt:
   videos of the same frame, unopened until the rule was frozen and the predictions written, all gave the frequency
   alone within 1.2 % of the accelerometer over the same seconds, compared as displacement. The speed test was tried on
   six run-ups of a real rotor (Kang et al. 2024, Mendeley Data, https://doi.org/10.17632/47y7rwc2yg.1, CC BY 4.0)
-  filmed from about 2 m, whose critical speed the shaft's eddy-current probe puts at 35.4-35.8 Hz: the shaft and disk
-  swung 0.1-0.2 px and it declined them; with the floor lowered as a diagnosis, the disk's swing peaked within 0.7 % of
-  the critical speed. A first rule for the speed test below a pixel, fixed on simulated noise, was tried blind on four
+  filmed from about 2 m, whose critical speed the shaft's eddy-current probe puts at 35.4-35.8 Hz: in all six the swing
+  stayed under the floor (0.1-0.2 px in the first two) and it declined them; with the floor lowered as a diagnosis, the
+  disk's swing in the first two peaked within 0.7 % of the critical speed. A first rule for the speed test below a pixel, fixed on simulated noise, was tried blind on four
   of the run-ups: it read four of five points within 2.6 % of the probe but one 16 % off, past the limit set before
   the test (in a fast run-up the resonance's peak spreads, and a sharper one past it was read), so it was taken out.
   Unlike the tap test, the speed test has no reading below a pixel.
