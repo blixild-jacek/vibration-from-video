@@ -5,8 +5,7 @@ film it ringing down, or shake it with a shaker and a force sensor while a fast 
 follow the motion in the video and read both numbers. Or film the part while its machine runs through its speeds, and
 read the speed at which it shakes most.
 
-It is an example to adapt, written up on the Blixild blog in
-[How to measure damping ratio and natural frequency on video](https://blixild.com/measure-damping-ratio-natural-frequency-video.html).
+It is an example to adapt, from [Blixild](https://blixild.com/) ([the blog](https://blixild.com/blog.html)).
 
 ## What is in it
 
@@ -17,7 +16,9 @@ It is an example to adapt, written up on the Blixild blog in
   acceleration measured where the shaker pushes ([printer-bed dataset](https://doi.org/10.5281/zenodo.21476609),
   CC BY 4.0). It downloads the data itself.
 - `make_test_clip.py`: makes a test video with a natural frequency and damping ratio you choose, ringing after a tap
-  or shaken by a machine coasting down or stepped through speeds, to check the arithmetic.
+  or shaken by a machine coasting down or stepped through speeds, to check the arithmetic (with `--outline`, the part
+  is a turning bar, to be followed by its outline).
+- `faint_noise.py`: checks the readings below a pixel on simulated swings, and sets their bars (see below).
 - `tests/`: unit tests.
 
 ## How it works
@@ -32,6 +33,11 @@ and the damping ratio follows:
 
     δ = ln(one upper peak ÷ the next)
     damping ratio = δ ÷ √(4π² + δ²)
+
+The natural frequency is the damped one ÷ √(1 − damping ratio²). The two differ by about the natural frequency ×
+damping ratio² ÷ 2, under a thousandth of a hertz for a 2 Hz part at 3 % damping, so the script prints both to five
+decimals; how many of those digits hold is the precision it prints with the signal-to-noise ratio (see Settings), not
+the number of decimals.
 
 **Below a pixel, the frequency from the spectrum.** When the swing is too small for the damping ratio peak by peak,
 the script takes its slow
@@ -71,7 +77,7 @@ force is recorded with the video, and the filmed motion divided by the force, fr
 part's response to each newton. It peaks at each natural frequency. One resonance is fitted to each peak, which gives
 its natural frequency and damping ratio; the same peak is also turned back into a ring-down and read as the tap test
 reads a video. The script does both for the camera and for the accelerometer, whose acceleration it first turns into
-displacement (divided by −ω², with ω = 2πf), since the fitted model's two extra terms for the neighbouring
+displacement (divided by −ω², with ω = 2πf), since the fitted model's two extra terms for the neighboring
 resonances hold for displacement per force.
 
 **The speed test.** The machine shakes the part at the speed it runs. The part and a still point are followed as in
@@ -105,8 +111,8 @@ You need Python 3.11 or newer. On Windows, type `python` or `py` where these ste
    python3 free_decay.py test_clip.mp4 --part 424 280 --fixed 104 84 --fps 60
    ```
 
-   It should report a natural frequency of 2.000 Hz and a damping ratio of about 0.030 (0.0301 on our run), against
-   the 2 Hz and 0.03 the video was made with.
+   It should report a natural frequency of about 2.0000 Hz (2.00001 Hz on our run, an Apple M3, 24 November 2026)
+   and a damping ratio of about 0.030 (0.0301), against the 2 Hz and 0.03 the video was made with.
 
    A coast-down from 18 to 7 Hz through a 12 Hz resonance, read by the speed test:
 
@@ -188,7 +194,7 @@ the video (it takes that as rest, and the damping ratio would read low), when th
 swing, when the part moves more than 40 px from one frame to the next (half the reach of the tracker's 21 px window
 over three pyramid levels), and when the first and second halves of the peaks give damping ratios more than a fifth
 apart and further than three times their combined standard error (two resonances, or a part that is not one linear
-resonance; neighbouring peaks share troughs, so the standard errors alone come out too small).
+resonance; neighboring peaks share troughs, so the standard errors alone come out too small).
 
 It also prints the signal-to-noise ratio: the first swing over the swing's noise, what is left of the stretch read
 once the ring read is taken off (or, for the frequency alone, the noise of the quiet end), and from it the best
@@ -276,7 +282,7 @@ Everything runs on your computer. The only connection is `--download`, which fet
 
 An example to adapt, not a maintained product. Issues and pull requests are read, without a promise of support.
 
-## Licence
+## License
 
 MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Jacek Garbuliński Blixild, [blixild.com](https://blixild.com/).
 
