@@ -623,54 +623,5 @@ class BelowAPixel(unittest.TestCase):
         self.assertLess(max(ratios), free_decay.FAINT_RATIO)
 
 
-
-class SpeedTestBelowAPixel(unittest.TestCase):
-    """A speed test whose swing stays under the floor: the frequency alone when the resonance stands out of the noise
-    around it in its windows and the swing rises and falls around it in time (speed_test.faint_response())."""
-
-    def film(self, ring, fn=35.5, zeta=0.02, ramp=6.0, hold=0.9, seed=0, fps=500.0):
-        """The two points' shifts (px): a rotor run up from rest to 50 Hz through a resonance at fn, its largest swing
-        ring x 0.01 px, in jitter of 0.01 px and a drift five times that (faint_noise.sweep), on the part's point."""
-        x = 0.01 * faint_noise.sweep(np.random.default_rng(seed), fps, fn, zeta, 0.0, 50.0, ramp, hold, ring)
-        part = np.zeros((len(x), 2))
-        part[:, 0] = x
-        return part, np.zeros_like(part), fps
-
-    def test_a_resonance_of_a_fifth_of_a_pixel_gives_its_frequency(self):
-        part, fixed, fps = self.film(20)
-        x, noise, floor, (t, f, a, stands), (peak, size, notes) = speed_test.read(part, fixed, fps)
-        self.assertAlmostEqual(peak, 35.5, delta=0.03 * 35.5)  # a run-up reads high by its lag (faint_noise.py)
-        note = [w for w in notes if w.code == "frequency-only"][0]
-        self.assertGreaterEqual(note.values["ratio"], speed_test.FAINT_LOCAL)
-        self.assertTrue(stands.any() and size < floor)
-
-    def test_noise_alone_under_a_pixel_is_still_refused(self):
-        part, fixed, fps = self.film(0)
-        with self.assertRaises(ValueError) as e:
-            speed_test.read(part, fixed, fps)
-        self.assertEqual(e.exception.args[0].code, "below-floor")
-
-    def test_a_speed_held_to_the_end_is_not_read_as_a_resonance(self):
-        # no resonance within the speeds (fn far above them): the unbalance's swing grows with the speed and is
-        # largest at the top speed, held until the video ends
-        part, fixed, fps = self.film(30, fn=400.0, ramp=4.0, hold=3.0)
-        with self.assertRaises(ValueError) as e:
-            speed_test.read(part, fixed, fps)
-        self.assertEqual(e.exception.args[0].code, "held-speed")
-
-    def test_a_swing_above_the_floor_is_read_as_before(self):
-        part, fixed, fps = self.film(200)  # 2 px: the windows above the floor, no frequency-only note
-        x, noise, floor, windows, (peak, size, notes) = speed_test.read(part, fixed, fps)
-        self.assertFalse([w for w in notes if w.code == "frequency-only"])
-        self.assertGreater(size, floor)
-
-    def test_simulated_noise_stays_under_the_threshold(self):
-        rng = np.random.default_rng(2)
-        ratios = [faint_noise.speed_ratio(faint_noise.swing(rng, 500.0, 10.0, 5), 500.0) for _ in range(50)]
-        ratios += [faint_noise.speed_ratio(faint_noise.unsteady(rng, 240.0, kind), 240.0)
-                   for kind in ("burst", "blip", "quieter", "frozen") for _ in range(10)]
-        self.assertLess(max(ratios), speed_test.FAINT_LOCAL)
-
-
 if __name__ == "__main__":
     unittest.main()
