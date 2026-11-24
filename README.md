@@ -218,8 +218,10 @@ requirements.txt:
   someone walks past the still point, four videos gave the frequency alone within 0.3-1.7 % of the accelerometer over
   the same seconds, their ring 39-63 times the noise; the other two, at 3.3 and 1.8 times, were declined. Four more videos of the same frame, unopened until the rule
   was frozen and the predictions written, all gave the frequency alone within 1.2 % of the accelerometer over the
-  same seconds, compared as displacement. The speed
-  test has not yet read a video of a real machine.
+  same seconds, compared as displacement. The speed test read two run-ups of a real rotor (Kang et al. 2024, Mendeley Data, https://doi.org/10.17632/47y7rwc2yg.1,
+  CC BY 4.0) filmed from about 2 m: the shaft and disk swung 0.1-0.2 px and it declined both; with the floor lowered
+  as a diagnosis, the disk's swing peaked within 0.6 % of the critical speed the rotor's eddy-current probe found. It
+  has no reading below a pixel yet.
 - **The brightness reading** is a quick first look: on the printer bed it read 221 Hz for the resonance at 215 Hz,
   and at 264 Hz it found the frequency but read the damping 30 to 40 % low.
 
