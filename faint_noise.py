@@ -6,7 +6,7 @@ the jitter. A ring is a tap: a damped sine starting at 5 s, its first swing a gi
 it comes from a real video, so the threshold is fixed before any real video is read with it.
 
 Usage:
-  python3 faint_noise.py              both tables, 1,000 noise-only swings for each case and 100 rings (about half a minute)
+  python3 faint_noise.py              the tables: 1,000 noise-only swings a case, 200 unsteady ones, 100 rings
   python3 faint_noise.py --quick      a tenth of that
 
 SPDX-License-Identifier: MIT
@@ -42,6 +42,50 @@ def ratio(x, fps):
     return found[1] if found else 0.0
 
 
+UNSTEADY = {  # noise that is not steady, as an independent audit of faint() built it (24 Nov 2026)
+    "frozen": "the last 3 s one repeated frame",
+    "quieter": "the last 6 s ten times quieter",
+    "burst": "noise five times larger for 4 s after an event at 5 s",
+    "blip": "a 3-frame jump of 30 times the jitter at 5 s",
+    "bump": "a 12 Hz wobble of 30 times the jitter, damping ratio 0.05, 2.5 s before the end",
+}
+
+
+def unsteady(rng, fps, kind, seconds=20.0, drift=5):
+    """A noise-only swing (units of the jitter) whose noise is not steady: one of UNSTEADY."""
+    n = int(seconds * fps)
+    t = np.arange(n) / fps
+    white = rng.normal(0, 1, n)
+    walk = np.cumsum(rng.normal(0, 1, n))
+    walk = drift * (walk - walk.mean()) / walk.std()
+    if kind == "quieter":
+        white[t >= seconds - 6] *= 0.1
+    if kind == "burst":
+        white[(t >= 5) & (t < 9)] *= 5
+    x = white + walk
+    if kind == "frozen":
+        x[t >= seconds - 3] = x[np.argmax(t >= seconds - 3)]
+    if kind == "blip":
+        x[int(5 * fps):int(5 * fps) + 3] += 30
+    if kind == "bump":
+        on = t >= seconds - 2.5
+        tt = t[on] - (seconds - 2.5)
+        x[on] += 30 * np.exp(-0.05 * 2 * np.pi * 12 * tt) * np.sin(2 * np.pi * 12 * tt)
+    return x
+
+
+def unsteady_table(rng, count):
+    print("Noise that is not steady: the share of noise-only swings that faint() passes (both bars)")
+    print("case       25 fps  60 fps  240 fps")
+    for kind, about in UNSTEADY.items():
+        shares = []
+        for fps in (25.0, 60.0, 240.0):
+            shares.append(np.mean([free_decay.passes(free_decay.faint(unsteady(rng, fps, kind), fps), fps)
+                                   for _ in range(count)]))
+        print(f"{kind:9s} " + "  ".join(f"{v:6.0%}" for v in shares) + f"   ({about})", flush=True)
+    print()
+
+
 def noise_table(rng, count):
     print("Noise only: faint()'s ratio (the threshold is %g)" % free_decay.FAINT_RATIO)
     print("seconds  fps  drift  99 %   99.9 %  largest")
@@ -57,8 +101,8 @@ def noise_table(rng, count):
 
 
 def ring_table(rng, count, drift=5):
-    print(f"Rings (damping ratio 0.02, drift {drift} times the jitter, 20 s): found at the threshold, and the frequency's "
-          "error")
+    print(f"Rings (damping ratio 0.02, drift {drift} times the jitter, 20 s): found at both bars, and the frequency's"
+          " error")
     print("  Hz   fps  ring/jitter  found  median error %  90 % within %")
     for hz, fps in ((3.0, 25.0), (3.7, 25.0), (12.3, 60.0), (47.0, 240.0), (90.0, 240.0)):
         damped = hz * np.sqrt(1 - 0.02 ** 2)
@@ -66,7 +110,7 @@ def ring_table(rng, count, drift=5):
             errors = []
             for _ in range(count):
                 found = free_decay.faint(swing(rng, fps, 20.0, drift, ring, hz), fps)
-                if found and found[1] >= free_decay.FAINT_RATIO and 0 < found[0] < fps / 2:
+                if free_decay.passes(found, fps):
                     errors.append(abs(found[0] / damped - 1) * 100)
             share = len(errors) / count
             err = f"{np.median(errors):13.2f}  {np.quantile(errors, .9):13.2f}" if errors else f"{'-':>13}  {'-':>13}"
@@ -80,6 +124,7 @@ def main():
     args = ap.parse_args()
     rng = np.random.default_rng(args.seed)
     noise_table(rng, 100 if args.quick else 1000)
+    unsteady_table(rng, 20 if args.quick else 200)
     ring_table(rng, 10 if args.quick else 100)
 
 

@@ -35,11 +35,19 @@ and the damping ratio follows:
 
 **Below a pixel, the frequency alone.** When the swing is too small for the damping ratio, the script takes its slow
 drift off (a high-pass at 0.5 Hz) and compares the spectrum of the stretch just after the tap with three stretches of
-the same length at the video's end, where the part has stopped. If the ring's peak stands at least 5 times above the
-highest of theirs, it gives the frequency and no damping ratio. The bar comes from simulated tracker noise with a slow
-drift of up to 30 times its size (`faint_noise.py`): noise alone never passed 3.34 in 30,000 simulated swings. On
-simulated rings, one whose first swing is ten times the noise was found in 76-96 % of cases (3 to 47 Hz), twenty
-times in 96-100 %, its frequency within 1.6 % in nine cases of ten. So the video has to end quiet.
+the same length at the video's end, where the part has stopped, and up to three before the tap. If the ring's peak
+stands at least 5 times above the highest of theirs, and 5 times above its own spectrum's median, it gives the
+frequency and no damping ratio. `faint_noise.py` checks both bars on simulated swings in half a minute:
+- steady tracker noise with a slow drift of up to 30 times its size never passed the first bar (2.64 at most in 30,000
+  swings);
+- noise that is not steady never passed both (200 swings each at 25, 60 and 240 frames a second): the last 3 s one
+  repeated frame, the last 6 s ten times quieter, noise five times larger for 4 s, a 3-frame blip;
+- a ring whose first swing is ten times the noise was found in 66-79 % of cases (3 to 47 Hz), twenty times in
+  90-100 %, its frequency within 1.5 % in nine cases of ten.
+
+Anything that rings after the largest jolt is read, the camera included: a bump of the tripod near the end was taken
+for the ring (42 % of cases at 60 frames a second, all at 240). So keep the camera untouched until the reading's end,
+and stop the reading (`--end`) before anyone touches it.
 
 **The shaker test.** When the part moves less than a pixel, the swing cannot be read peak by peak. The shaker's
 force is recorded with the video, and the filmed motion divided by the force, frequency by frequency, gives the
@@ -148,27 +156,30 @@ evenly.
 | --- | --- | --- |
 | `--fps` | the file's own | The rate the video was taken at. |
 | `--box` | 41 px | The square around each point whose corners are followed. It must lie on the part (or on the still object). |
-| `--min-peak` | 1 px, or ten times the tracking noise if that is larger | The smallest peak the damping is read from. A pixel is a safe target from test videos, where peaks under about a pixel came out up to 17 % low and bent the reading, not a physical limit; below the floor the script reads the frequency alone. Given, it replaces the default. |
+| `--min-peak` | 1 px, or ten times the jitter if that is larger | The smallest peak the damping is read from. A pixel is a safe target from test videos, where peaks under about a pixel came out up to 17 % low and bent the reading, not a physical limit; below the floor the script reads the frequency alone. Given, it replaces the default. |
 | `--plot` | none | Saves the swing, the peaks used and the floor. |
 
 The jitter is how much a point seems to move from one frame to the next, the tracker's noise: the still point's, or
-the settled swing's when a shaking camera makes the still point's larger, or the moving point's own noise while it
-rings when that is larger still (a video's compression can leave a still point almost untouched while it blurs a
-moving one). The swing's amplitude at each peak is half
+the settled swing's when a shaking camera makes the still point's larger. A video's compression can leave a still point
+almost untouched while it blurs a moving one, so the signal-to-noise ratio below takes its noise from the moving point.
+The swing's amplitude at each peak is half
 the drop to the troughs either side, so a rest position that is a little off does not bias the damping. The
 frequency and the damping are read from the knock (the largest swing) to the end of the first unbroken run of swings
 above the floor. The script warns when the part still swings in the last tenth of
 the video (it takes that as rest, and the damping ratio would read low), when there are fewer than four frames per
 swing, when the part moves more than 40 px from one frame to the next (half the reach of the tracker's 21 px window
-over three pyramid levels), and when the first and second halves of the peaks give damping ratios further apart than
-three times their combined standard error (two resonances, or a part that is not one linear resonance).
+over three pyramid levels), and when the first and second halves of the peaks give damping ratios more than a fifth
+apart and further than three times their combined standard error (two resonances, or a part that is not one linear
+resonance; neighbouring peaks share troughs, so the standard errors alone come out too small).
 
-It also prints the signal-to-noise ratio: the first swing over the swing's noise while it rings, and from it the best
-precision noise alone allows, the Cramér-Rao bound for a decaying sine in white noise. With d = (first swing ÷ noise)
-× √(frame rate ÷ (8π × damping ratio × natural frequency)), that bound is about 2 × damping ratio ÷ d in the frequency
-and 2 ÷ d in the damping ratio, as fractions (checked numerically against the bound to within 1-4 %). Real readings
-are worse by what the bound leaves out: the clock, the tracker's bias below a pixel, and a part whose frequency shifts
-as it rings down.
+It also prints the signal-to-noise ratio: the first swing over the swing's noise, what is left of the stretch read once
+the ring read is taken off (or, for the frequency alone, the noise of the quiet end), and from it the best precision
+noise alone allows, the Cramér-Rao bound for a decaying sine in white noise. With d = (first swing ÷ noise) ×
+√(frame rate ÷ (8π × damping ratio × natural frequency)), that bound is about 2 × damping ratio ÷ d in the frequency
+and 2 ÷ d in the damping ratio, as fractions (checked numerically against the bound to within 1-4 %). It is a bound,
+not this script's precision: the script reads the peaks and a windowed spectrum, which in simulation scattered 2-4
+times more than the bound in frequency and 3-8 times more in damping, and real readings add the clock, the tracker's
+bias below a pixel, and a part whose frequency shifts as it rings down.
 
 What the scripts gave, on an Apple M3 laptop, 21-22 November 2026, in two installs: Python 3.13 with OpenCV 5.0,
 NumPy 1.26 and SciPy 1.17 from conda, and Python 3.15 with OpenCV 5.1, NumPy 2.5 and SciPy 1.18 from
@@ -178,7 +189,7 @@ requirements.txt:
   2 % of the values set where the tracker followed every frame (a frame it loses is bridged with a straight line,
   which can bend the peaks: the script warns about any lost frame among those it reads). The peak arithmetic itself
   holds to four frames per swing: on swings computed without a video, within 1.3 % at damping ratios of 0.01 and 0.02
-  in any sampling phase, and 2.9 % at 0.05. The frequency held within 0.014 % down to 2.4 frames per swing (100 Hz at
+  in any sampling phase, and up to about 5 % at 0.05 near four frames (1.9 % at 4.25). The frequency held within 0.014 % down to 2.4 frames per swing (100 Hz at
   240 frames a second). On two videos at 30 frames a second the damping ratio read 4 % and 12.5 % low; in the second,
   at 3.75 frames per swing, a 40 px swing moved 67 px a frame and the tracker lost frames. The speed test read 50 and 80 Hz at 240 frames a second within 0.6 %, the swing in full.
 - **The printer-bed videos**: the camera's resonances at 76, 126, 215 and 264 Hz within about 0.3 % of the

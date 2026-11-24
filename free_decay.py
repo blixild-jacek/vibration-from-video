@@ -43,9 +43,10 @@ REACH = MARGIN - 100
 # Lucas-Kanade window over three pyramid levels (10 px x 2^3 = 80 px). A drawn video tracked at 42 px a frame and lost
 # frames at 67 px (an independent audit, 24 Nov 2026)
 STEP = 40
-# frames per swing below which the damping ratio is warned about. The peak arithmetic reads it within 1.3 % at four
-# frames per swing and more (damping ratios 0.01 and 0.02, any sampling phase, with or without 0.02 px of noise), within
-# 2.9 % at 0.05, and 3-5 % off at 3 to 3.7 frames (tests); fewer frames mostly mean larger steps for the tracker (STEP)
+# frames per swing below which the damping ratio is warned about. Without noise, the peak arithmetic reads it within
+# 1.3 % from four frames per swing at damping ratios of 0.01 and 0.02, in any sampling phase; at 0.05 up to about 5 %
+# near four frames (1.9 % at 4.25), and 3-5 % off at 3 to 3.7 frames; fewer frames also mean larger steps for the
+# tracker (STEP)
 FEW_FRAMES = 4
 
 
@@ -321,16 +322,17 @@ def spectrum(x, falling=False):
 
 def tone(x, fps, falling=False):
     """The strongest frequency in a record (Hz), the highest peak of its spectrum() above three cycles in the record
-    (with the falling window if falling), refined between bins, and that tone's amplitude (px). NaN for both when the highest point lies at the bottom of the
-    searched range, or the parabola's top more than half a bin beyond the three bins it is drawn through: no peak to
-    place."""
+    (with the falling window if falling), refined between bins, and that tone's amplitude (px). NaN for both when the
+    record is flat, the highest point lies at the bottom of the searched range, or the parabola's top lies more than
+    half a bin beyond the three bins it is drawn through: no peak to place."""
     if len(x) < 12 or not np.all(np.isfinite(x)):
         raise ValueError(Note("few-swings", "too few swings to find a frequency: the largest swing should come at "
                               "the knock, not later"))
     spectrum_, total = spectrum(x, falling)
     n, lowest = 8 * len(x), LOWEST
-    if not spectrum_[lowest:-1].max() > 1e-9 * total * max(1.0, float(np.abs(x).max())):  # a flat record, such as a
-        return float("nan"), float("nan")  # gap bridged by a straight line: only rounding noise, no frequency
+    size = float(np.abs(x - x.mean()).max())
+    if not size > 0 or not spectrum_[lowest:-1].max() > 1e-9 * total * size:  # a flat record, such as a gap bridged
+        return float("nan"), float("nan")  # by a straight line: only rounding noise, no frequency
     k = np.argmax(spectrum_[lowest:-1]) + lowest
     if k == lowest:  # the highest point at the bottom of the searched range: the spectrum still rises below it, so
         return float("nan"), float("nan")  # the peak lies below three cycles in the record (no frequency)
@@ -357,8 +359,10 @@ def slope(t, y):
 
 def damping(x, fps, fd, floor):
     """Damping ratio, logarithmic decrement, the peaks used, and with eight peaks or more the decrements of their first
-    and second halves and whether those differ by more than three times their combined standard error, as they do when
-    two resonances share the swing or the part is not one linear resonance (None with fewer peaks).
+    and second halves and whether they differ by more than three times their combined standard error and by more than
+    a fifth, as they do when two resonances share the swing or the part is not one linear resonance (None with fewer
+    peaks). Neighbouring peaks share troughs and their small errors are correlated, so the standard errors alone come
+    out too small: a clean ring was called bent in most sampling phases without the fifth.
 
     Each swing's amplitude is half the drop from an upper peak to the troughs either side, so a rest position that is
     off by a constant, or drifts slowly, does not change it; its logarithm falls by the decrement every cycle."""
@@ -384,7 +388,8 @@ def damping(x, fps, fd, floor):
     if len(peaks) >= 8:
         h = len(peaks) // 2
         (s1, e1), (s2, e2) = slope(t[:h], logs[:h]), slope(t[h:], logs[h:])
-        halves = (-s1 / fd, -s2 / fd, bool(abs(s1 - s2) > 3 * np.hypot(e1, e2)))
+        d1, d2 = -s1 / fd, -s2 / fd
+        halves = (d1, d2, bool(abs(s1 - s2) > 3 * np.hypot(e1, e2) and abs(d1 - d2) > 0.2 * abs(d1 + d2) / 2))
     return decrement / np.sqrt(4 * np.pi ** 2 + decrement ** 2), decrement, peaks, halves
 
 
@@ -436,24 +441,29 @@ def measure(x, fps, floor):
         warnings.append(Note("still-swinging", "the part still swings in the last tenth of the video, which the "
                              "script takes as rest: film until it stops, or the damping ratio may read low"))
     if fd > fps / FEW_FRAMES:
-        warnings.append(Note("few-frames", f"fewer than four frames per swing ({fps / fd:.1f}): the damping ratio may "
-                             "be off", per_swing=fps / fd))
+        warnings.append(Note("few-frames", f"fewer than {FEW_FRAMES} frames per swing ({fps / fd:.1f}): the damping "
+                             "ratio may be off", per_swing=fps / fd, few=FEW_FRAMES))
     return fd, fd / np.sqrt(1 - zeta ** 2), zeta, decrement, peaks + start, warnings
 
 
 # Below the floor, the frequency alone. The damping ratio needs swings above the floor, since smaller ones carry the
-# tracker's error, but a ring far smaller still shows in the spectrum, as long as it stands out of the video's own noise.
-# So the swing's slow drift is taken off, and the stretch right after the strike is compared with stretches of the same
-# length at the video's end, where the part has stopped: each video's own jitter and drift set the bar, not an assumed
-# level. On noise-only swings (white tracker jitter plus a random-walk drift of up to 30 times its size, 25 to 240 fps,
-# 10 and 20 s; faint_noise.py), the ratio stayed under 3.34 in 30,000 simulated swings (99.9 % under 2.75), so FAINT_RATIO leaves
-# room for noise the simulation leaves out. At it, a ring whose first swing is ten times the jitter (damping ratio 0.02)
-# was found in 76-96 % of simulated swings at 3-47 Hz (11 % at 90 Hz and 240 fps), twenty times in 96-100 %, with its
-# frequency within 1.6 % in nine cases of ten.
+# tracker's error, but a ring far smaller still shows in the spectrum, as long as it stands out of the video's own
+# noise. So the swing's slow drift is taken off, and the stretch right after the strike is compared with stretches of
+# the same length at the video's end, where the part has stopped, and before the strike: each video's own jitter and
+# drift set the bar, not an assumed level. And the stretch's own peak must stand out of its own spectrum, which a burst
+# of noise or a blip does not. faint_noise.py measures both bars on simulated swings: steady noise (white tracker
+# jitter plus a random-walk drift of up to 30 times its size, 25 to 240 fps, 10 and 20 s), noise that is not steady
+# (a frozen or quieter end, a burst after an event, a blip), and rings.
 FAINT_CUT = 0.5  # Hz: the drift's high-pass, below the lowest frequency read (three cycles in 4 s, 0.75 Hz)
 FAINT_LENGTHS = (0.5, 1.0, 2.0, 4.0)  # s after the strike: a short stretch for a fast ring that dies quickly
-FAINT_QUIET = 3  # stretches of the same length at the video's end, against which the ring is measured: with only one
-                 # or two, noise alone reached 5.67 in simulated 10 s swings, so a length counts only when all three fit
+FAINT_QUIET = 3  # stretches of the same length at the video's end, against which the ring is measured: when short
+                 # videos used one or two, noise alone reached 5.67 in 30,000 simulated swings, so a length counts only
+                 # when all three fit; up to as many before the jump are measured against too
+FAINT_SKIP = 5  # frames after the largest frame-to-frame jump before the stretch starts: a jump or a blip a few frames
+                # long, such as the hammer passing a point, is not read as ringing
+FAINT_OWN = 5.0  # the stretch's own highest spectral peak over its median: a ring gathers in one peak, while a burst of
+                 # noise or a blip spreads over every frequency. Of the simulated rings that passed FAINT_RATIO, 95 %
+                 # stood 5.7 or more; a blip about 1, white noise 2-4
 FAINT_RATIO = 5.0
 SMALL = {"below-floor": "the swing never rises above the floor of {floor:.2f} px",
          "few-peaks": "fewer than three swings rise above the floor of {floor:.2f} px",
@@ -467,31 +477,48 @@ def drift_off(x, fps, cut=FAINT_CUT):
     return sosfiltfilt(butter(2, cut, "high", fs=fps, output="sos"), x)
 
 
-def faint(x, fps, lengths=FAINT_LENGTHS, quiet=FAINT_QUIET, bar=FAINT_RATIO):
-    """A ring too small for the damping ratio: the swing's drift taken off, the strike at its largest frame-to-frame
-    change, and for each length the stretch from two frames after it, its spectrum's highest peak over the highest of
-    `quiet` stretches of the same length at the video's end (spectrum() with the falling window, which finds a
-    short ring best). The frequency is tone()'s from the same spectrum, so it is the ring that was found: a full window
-    would weight a fast ring's start, where it all is, near zero and read the noise after it. The falling window reads
-    a clean ring about 2.7 % / (cycles in the stretch) off, under 1 % at the three cycles it needs. Returns (frequency Hz, ratio, seconds, start, end) for the longest length
-    whose ratio reaches `bar`, since a short stretch cannot hold three cycles of a slow ring and the strike's own jolt
-    stands out in it (a real video's 3 Hz ring read 7.95 Hz from 0.5 s); else the length with the highest ratio. Lengths
-    whose frequency tone() cannot place are left out; None when none is left (no quiet end after the stretch)."""
+def faint(x, fps, lengths=FAINT_LENGTHS, quiet=FAINT_QUIET):
+    """A ring too small for the damping ratio. The swing's drift is taken off, the strike is its largest frame-to-frame
+    jump, and for each length the stretch from FAINT_SKIP frames after it is measured two ways (spectrum() with the
+    falling window, which finds a short ring best): its highest peak over the highest of `quiet` stretches of the same
+    length at the video's end and of up to as many before the jump (the ratio), and over its own median (own). Lengths
+    where any of these stretches holds a repeated frame (a duplicated frame tracks exactly still) are left out, as are
+    lengths whose frequency tone() cannot place. The frequency is tone()'s from the same spectrum, so it is the ring
+    that was found: a full window would weight a fast ring's start, where it all is, near zero. The falling window reads
+    a clean ring up to about 2.7 % off at three cycles in the stretch, under 1 % from about eight. Returns
+    (frequency Hz, ratio, seconds, start, end, own) for the longest length that passes() (a short stretch cannot hold
+    three cycles of a slow ring, and the strike's own jolt stands out in it: a real video's 3 Hz ring read 7.95 Hz
+    from 0.5 s); else the length with the highest ratio; None when no length fits (no quiet end after the stretch)."""
+    if not FAINT_CUT < fps / 2 or len(x) < 24:
+        return None
     y = drift_off(x, fps)
-    start = int(np.argmax(np.abs(np.diff(y)))) + 3
+    jump = int(np.argmax(np.abs(np.diff(y))))
+    start = jump + FAINT_SKIP
+    still = np.r_[False, np.diff(x) == 0]  # a frame the same as the one before: a duplicated frame
     found = []
     for seconds in lengths:
         n = int(round(seconds * fps))
         ends = [len(y) - i * n for i in range(quiet) if len(y) - (i + 1) * n >= start + n]
         if n < 12 or len(ends) < quiet:
             continue
-        hz = tone(y[start:start + n], fps, True)[0]
-        top = max(spectrum(y[e - n:e], True)[0][LOWEST:-1].max() for e in ends)
-        if not np.isfinite(hz) or not top > 0:  # no peak to place, or a quiet end with no noise at all (a lost point)
+        spans = [(start, start + n)] + [(e - n, e) for e in ends] + \
+                [(jump - (i + 1) * n, jump - i * n) for i in range(quiet) if jump - (i + 1) * n >= 0]
+        if any(still[a + 1:b].sum() > 1 for a, b in spans):
             continue
-        found.append((hz, spectrum(y[start:start + n], True)[0][LOWEST:-1].max() / top, seconds, start, start + n))
-    passed = [f for f in found if f[1] >= bar]
-    return max(passed, key=lambda f: f[2]) if passed else max(found, key=lambda f: f[1], default=None)
+        hz = tone(y[start:start + n], fps, True)[0]
+        ring = spectrum(y[start:start + n], True)[0][LOWEST:-1]
+        top = max(spectrum(y[a:b], True)[0][LOWEST:-1].max() for a, b in spans[1:])
+        if not np.isfinite(hz) or not top > 0:  # no peak to place, or a quiet stretch with no noise at all
+            continue
+        found.append((hz, ring.max() / top, seconds, start, start + n, ring.max() / np.median(ring)))
+    passing = [f for f in found if passes(f, fps)]
+    return max(passing, key=lambda f: f[2]) if passing else max(found, key=lambda f: f[1], default=None)
+
+
+def passes(found, fps):
+    """Whether faint()'s reading stands out of the noise: its ratio to the quiet stretches reaches FAINT_RATIO, its own
+    peak over its median FAINT_OWN, and its frequency lies below half the frame rate."""
+    return bool(found) and found[1] >= FAINT_RATIO and found[5] >= FAINT_OWN and 0 < found[0] < fps / 2
 
 
 def noise_in(x):
@@ -499,6 +526,8 @@ def noise_in(x):
     bins, so the median bin holds noise. Taken on the moving point while it moves, it includes what the tracker and the
     video's compression add there, which a still point's jitter can miss: on a compressed test video an independent
     audit measured 0.021 px on the moving point against 0.0006 px on the still one."""
+    if len(x) < 8:
+        return float("nan")
     t = np.arange(len(x))
     flat = x - np.polyval(np.polyfit(t, x, 1), t)
     window = np.hanning(len(x))
@@ -514,20 +543,28 @@ def first_and_noise(y, fps, hz):
 
 
 def signal_to_noise(x, fps, floor, readings):
-    """The ring's signal-to-noise ratio: its first swing (px) over the noise of the stretch read (noise_in()), and, when
-    the damping ratio was read, the ring-down's d = (first / noise) x sqrt(fps / (8 pi zeta fn)), with the best
-    precision noise alone allows (the Cramer-Rao bound for a decaying sine in white noise, which d gives to within
-    1-4 % in the five cases checked): the frequency to 2 zeta / d and the damping ratio to 2 / d, as fractions."""
+    """The ring's signal-to-noise ratio: its first swing (px) over the swing's noise (noise_in(): what is left of the
+    stretch read once the ring is taken off, or the quiet end a frequency alone was measured against), and, when the
+    damping ratio was read, the ring-down's d = (first / noise) x sqrt(fps / (8 pi zeta fn)), with the best precision
+    noise alone allows: the Cramer-Rao bound for a decaying sine in white noise, which d gives to within 1-4 % in the
+    five cases checked, the frequency to 2 zeta / d and the damping ratio to 2 / d, as fractions. It is a bound: this
+    script's own readings, from the peaks and a windowed spectrum, scattered several times more in simulation."""
     fd, fn, zeta, decrement, peaks, warnings = readings
     only = [w for w in warnings if getattr(w, "code", "") == "frequency-only"]
-    if only:
+    if only:  # the ring's first swing, against the noise of the quiet end it was measured against
         a, b = only[0].values["start"], only[0].values["end"]
-        first, noise = first_and_noise(drift_off(x, fps)[a:b], fps, fd)
-    else:
+        y = drift_off(x, fps)
+        first, noise = first_and_noise(y[a:b], fps, fd)[0], noise_in(y[len(y) - FAINT_QUIET * (b - a):])
+    else:  # the noise left once the ring read is taken off: the ring's own leakage would pass for noise
         a, b = ringing_part(x, fps, floor)
-        first, noise = float(abs(x[a])), noise_in(x[a:b])
+        t = np.arange(b - a) / fps
+        decay = np.exp(-zeta * 2 * np.pi * fn * t)
+        phase = 2 * np.pi * fd * t
+        basis = np.stack([decay * np.cos(phase), decay * np.sin(phase), np.ones_like(t), t], 1)
+        rest = x[a:b] - basis @ np.linalg.lstsq(basis, x[a:b], rcond=None)[0]
+        first, noise = float(abs(x[a])), noise_in(rest)
     out = {"first": first, "noise": noise, "ratio": first / noise}
-    if np.isfinite(zeta) and zeta > 0:
+    if np.isfinite(zeta) and zeta > 0 and np.isfinite(noise):
         d = first / noise * np.sqrt(fps / (8 * np.pi * zeta * fn))
         out.update(d=d, frequency=2 * zeta / d, damping=2 / d)
     return out
@@ -567,19 +604,12 @@ def read(part, fixed, fps, min_peak=None):
     noise, floor = floor_of(x, fixed, min_peak)
     try:
         readings = measure(x, fps, floor)
-        start, end = ringing_part(x, fps, floor)
-        if end - start >= 16:  # the moving point's own noise while it rings, which the still point's jitter can miss
-            moving = noise_in(x[start:end])
-            noise = max(noise, moving)
-            if min_peak is None and 10 * moving > floor:
-                floor = 10 * moving
-                readings = measure(x, fps, floor)
     except ValueError as e:  # too small for the damping ratio: the frequency alone, if a ring stands out (faint())
         why = getattr(e.args[0], "code", None)
         found = faint(x, fps) if why in SMALL else None
-        if not found or not found[1] >= FAINT_RATIO or not 0 < found[0] < fps / 2:
+        if not passes(found, fps):
             raise
-        fd, ratio, seconds, start, end = found
+        fd, ratio, seconds, start, end, _ = found
         lost = np.isnan(part).any(axis=1) | np.isnan(fixed).any(axis=1)
         if lost[start:end].any() or lost[len(lost) - FAINT_QUIET * (end - start):].any():
             raise  # a gap bridged by a straight line can make a quiet end look flat, or a ring
@@ -587,7 +617,7 @@ def read(part, fixed, fps, min_peak=None):
             "frequency-only", f"only the frequency is read: {SMALL[why].format(floor=floor)}, too few for the damping "
             f"ratio, but the {seconds:g} s after the strike stand {ratio:.1f} times above the video's quiet end, where "
             f"{FAINT_RATIO:g} is needed. For the damping ratio, film closer or tap harder",
-            why=why, floor=floor, seconds=seconds, ratio=ratio, start=start, end=end)])
+            why=why, floor=floor, seconds=seconds, ratio=ratio, start=start, end=end, needed=FAINT_RATIO)])
         span = slice(start, end)
     else:
         peaks, period = readings[4], fps / readings[0]
@@ -599,7 +629,7 @@ def read(part, fixed, fps, min_peak=None):
     if step > STEP:
         readings[-1].append(Note("fast-step", f"the part moves up to {step:.0f} px from one frame to the next, more "
                                  f"than the {STEP} px the tracker reliably follows: film from further away or at a "
-                                 "higher frame rate", step=float(step)))
+                                 "higher frame rate", step=float(step), limit=STEP))
     return x, noise, floor, readings
 
 

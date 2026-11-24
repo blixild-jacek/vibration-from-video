@@ -77,7 +77,8 @@ def resonance(f, a, above, fps):
     k = int(np.argmax(A))
     peak, size = float(F[k]), float(A[k])
     notes = []
-    for side, rest in (("below", a[f < peak]), ("above", a[f > peak])):
+    for side, rest in (("below", a[above & (f < peak)]), ("above", a[above & (f > peak)])):  # windows below the floor
+        # read random frequencies (a stopped machine) and would bracket any peak
         if not (rest <= HALF_POWER * size).any():
             notes.append(Note("edge-peak", f"the swing does not fall to 71 % of its largest {side} {peak:.2f} Hz "
                               "within the speeds filmed: the resonance may lie beyond them, or the speeds were stepped "
@@ -89,16 +90,21 @@ def resonance(f, a, above, fps):
     return peak, size, notes
 
 
-def resolution(f, a, above, near=10):
-    """How finely the windows place the resonance (Hz): the median change in frequency between consecutive windows
-    within `near` windows of the largest swing, leaving out changes under 0.1 % (windows at one held speed). A
-    coast-down's windows lie about (rate of slowing) x 1.5 / f^2 apart in relative frequency; stepped speeds, a step
-    apart."""
-    k = int(np.flatnonzero(above)[np.argmax(a[above])])
-    near_f = f[max(0, k - near):k + near + 1]
-    changes = np.abs(np.diff(near_f))
-    changes = changes[changes > 0.001 * f[k]]
-    return float(np.median(changes)) if len(changes) else 0.0
+def resolution(f, a, above):
+    """How finely the windows place the resonance (Hz): the gap from the largest swing's frequency to the nearest
+    frequencies read on either side, the median of the two. The windows above the floor are grouped by frequency, within
+    0.2 % of each other; when most windows sit in groups of two or more (speeds held in steps), only those groups count,
+    so a window that straddles a step does not shrink the gap. A coast-down's windows lie about (rate of slowing) x 1.5 /
+    f^2 apart in relative frequency; stepped speeds, a step apart. NaN when no other frequency was read."""
+    peak = float(f[above][np.argmax(a[above])])
+    freqs = np.sort(f[above])
+    groups = np.split(freqs, np.flatnonzero(np.diff(freqs) > 0.002 * peak) + 1)
+    if sum(len(g) for g in groups if len(g) > 1) > len(freqs) / 2:
+        groups = [g for g in groups if len(g) > 1] or groups
+    centers = np.array([np.median(g) for g in groups])
+    k = int(np.argmin(np.abs(centers - peak)))
+    gaps = [abs(centers[j] - centers[k]) for j in (k - 1, k + 1) if 0 <= j < len(centers)]
+    return float(np.median(gaps)) if gaps else float("nan")
 
 
 def read(part, fixed, fps, min_peak=None):
@@ -132,8 +138,10 @@ def main():
           f"; jitter {noise:.3f} px; floor {floor:.2f} px")
     print(f"windows above the floor: {above.sum()} of {len(above)}, from {f[above].min():.2f} to "
           f"{f[above].max():.2f} Hz")
-    print(f"largest swing {size:.1f} px at {peak:.3f} Hz ({60 * peak:.0f} rpm if the part moves once a revolution); "
-          f"windows near it lie {resolution(f, a, above):.3f} Hz apart, the resolution")
+    spacing = resolution(f, a, above)
+    print(f"largest swing {size:.1f} px at {peak:.3f} Hz ({60 * peak:.0f} rpm if the part moves once a revolution)"
+          + (f"; the nearest other frequencies read lie {spacing:.3f} Hz away, the resolution" if spacing == spacing
+             else ""))
     for w in notes:
         print(f"warning: {w}")
     if args.plot:

@@ -210,10 +210,18 @@ class SpeedTest(unittest.TestCase):
         peak, size, notes = self.read(make_test_clip.coast_down(105.0, 0.02, 40.0, 115.0, 60.0, 20), 20)
         self.assertEqual([n.code for n in notes], ["near-half"])
 
-    def test_the_resolution_is_the_spacing_of_windows_near_the_peak(self):
-        f = np.array([10.0, 10.0, 10.0, 11.0, 11.0, 12.0, 12.0, 12.0, 13.0, 13.0])  # stepped a hertz apart
-        a = np.array([1, 1, 1, 3, 3, 9, 9, 9, 3, 3.0])
+    def test_the_resolution_is_the_gap_between_held_speeds(self):
+        f = np.array([10.0, 10.0, 10.0, 10.5, 11.0, 11.0, 11.6, 12.0, 12.0, 12.0, 12.4, 13.0, 13.0])  # 1 Hz steps, with
+        a = np.array([1, 1, 1, 2, 3, 3, 6, 9, 9, 9, 5, 3, 3.0])  # windows straddling the steps between them
         self.assertAlmostEqual(speed_test.resolution(f, a, a > 0.5), 1.0)
+        self.assertTrue(np.isnan(speed_test.resolution(np.full(5, 12.0), np.ones(5), np.ones(5, bool))))
+
+    def test_windows_below_the_floor_do_not_bracket_the_peak(self):
+        f = np.array([20.0, 18.0, 16.0, 14.0, 13.0, 4.0, 7.0, 2.5])  # a coast-down toward a resonance below 13 Hz,
+        a = np.array([2.0, 3.0, 5.0, 9.0, 12.0, 0.1, 0.1, 0.1])  # then the machine stopped: noise windows
+        peak, size, notes = speed_test.resonance(f, a, a > 1.0, 240)
+        self.assertEqual(peak, 13.0)
+        self.assertIn("below", [n.values["side"] for n in notes if n.code == "edge-peak"])
 
     def test_a_resonance_beyond_the_speeds_filmed_is_warned_about(self):
         peak, size, notes = self.read(make_test_clip.coast_down(25.0, 0.02, 40.0, 20.0, 6.0, 20), 20)
@@ -531,6 +539,50 @@ class AuditOfLimits(unittest.TestCase):
         part[:, 0] *= 4  # about 70 px a frame
         _, _, _, readings = free_decay.read(part, np.zeros_like(part), fps)
         self.assertIn("fast-step", [w.code for w in readings[-1]])
+
+
+class SecondAudit(unittest.TestCase):
+    """The cases an independent audit of the frequency below a pixel and the SNR found (24 Nov 2026)."""
+
+    def test_a_short_well_damped_ring_still_gives_its_damping_ratio(self):
+        fps, n = 240, 480
+        part = np.zeros((n, 2))
+        part[:, 0] = ring(40.0, 0.08, fps, n / fps, amplitude=20.0, noise=0.02)
+        _, _, _, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, np.zeros_like(part), fps)
+        self.assertAlmostEqual(zeta, 0.08, delta=0.08 * 0.03)
+
+    def test_the_snr_of_a_short_well_damped_ring_measures_the_noise(self):
+        fps, n = 240, 480
+        part = np.zeros((n, 2))
+        part[:, 0] = ring(40.0, 0.08, fps, n / fps, amplitude=20.0, noise=0.02)
+        x, noise, floor, readings = free_decay.read(part, np.zeros_like(part), fps)
+        self.assertAlmostEqual(free_decay.signal_to_noise(x, fps, floor, readings)["noise"], 0.02, delta=0.01)
+
+    def test_noise_that_is_not_steady_gives_no_frequency(self):
+        rng = np.random.default_rng(3)
+        for kind in ("frozen", "quieter", "burst", "blip"):
+            for fps in (25.0, 240.0):
+                passed = [free_decay.passes(free_decay.faint(faint_noise.unsteady(rng, fps, kind), fps), fps)
+                          for _ in range(20)]
+                self.assertFalse(any(passed), (kind, fps))
+
+    def test_a_clean_ring_is_not_called_bent_in_any_sampling_phase(self):
+        for phase in np.linspace(0, 2 * np.pi, 16, endpoint=False):
+            t = np.arange(240 * 10) / 240
+            wn = 2 * np.pi * 10
+            x = 30 * np.exp(-0.02 * wn * t) * np.cos(wn * np.sqrt(1 - 0.02 ** 2) * t + phase)
+            *_, warnings = free_decay.measure(x, 240, 1.0)
+            self.assertNotIn("not-straight", [w.code for w in warnings])
+
+    def test_a_low_frame_rate_is_refused_cleanly(self):
+        part = np.zeros((60, 2))
+        part[:, 0] = 0.01 * np.random.default_rng(0).normal(size=60)
+        with self.assertRaises(ValueError):
+            free_decay.read(part, np.zeros_like(part), 1.0)
+
+    def test_a_flat_record_in_small_units_is_still_a_record(self):
+        x = 1e-6 * np.sin(2 * np.pi * 5 * np.arange(600) / 60)  # meters, not pixels
+        self.assertAlmostEqual(free_decay.tone(x, 60)[0], 5.0, delta=0.01)
 
 
 class BelowAPixel(unittest.TestCase):
