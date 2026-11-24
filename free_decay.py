@@ -6,9 +6,11 @@ flow, checked forwards and backwards), measures the swing in pixels, and reads:
   - the damped natural frequency from the spectrum of the swing, while it rings above the floor,
   - the damping ratio from how fast the upper peaks shrink (the logarithmic decrement),
   - the noise floor from the frame-to-frame jitter of the point that does not move;
-  - for a swing too small for the damping ratio, the frequency alone, when the ring after the strike stands out of
-    the video's own noise at its quiet end.
-Neither result needs millimeters: frequency comes from time, damping from a ratio of peaks.
+  - for a swing too small for the peaks (fewer than three rise above the floor), the frequency from the spectrum of
+    the ring after the strike, when it stands out of the video's own noise at its quiet end, and the damping ratio
+    from a decaying wave fitted to every frame of that ring, when it stands far enough out of the noise (its d
+    reaches FIT_D); else the frequency alone.
+Neither result needs millimeters: frequency comes from time, damping from a ratio of peaks or a fitted decay.
 
 Usage:
   python3 free_decay.py VIDEO                                 saves VIDEO_first_frame.png with a pixel grid to read
@@ -909,9 +911,10 @@ def main():
     print(f"frames {len(x)} at {fps:g} fps" + ("" if args.fps is None else f" (the file stores {stored:g})") +
           f"; jitter {noise:.3f} px; floor {floor:.2f} px; largest swing {np.abs(x).max():.1f} px")
     if np.isnan(zeta):
-        print(f"damped natural frequency {fd:.3f} Hz; the damping ratio is not read")
+        print(f"damped natural frequency {fd:.5f} Hz; the damping ratio is not read")
     else:
-        print(f"damped natural frequency {fd:.3f} Hz; natural frequency {fn:.3f} Hz")
+        print(f"damped natural frequency {fd:.5f} Hz; natural frequency {fn:.5f} Hz")  # five decimals, as the page:
+        # the two part by about fn zeta^2 / 2, under a thousandth of a hertz at a few percent
         print(f"logarithmic decrement {decrement:.4f}; damping ratio {zeta:.4f} " +
               (f"(from {len(peaks)} peaks)" if len(peaks) else "(from a decaying wave fitted below the floor)"))
     snr = signal_to_noise(x, fps, floor, (fd, fn, zeta, decrement, peaks, warnings))
