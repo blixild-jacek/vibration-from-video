@@ -1,4 +1,4 @@
-"""A part's response to its machine's own running speeds, from a slow-motion film: the machine stepped through its
+"""A part's response to its machine's own running speeds, from a slow-motion video: the machine stepped through its
 speeds, holding each for a few seconds, or coasting down after it is switched off.
 
 The part and a still point are followed as free_decay.py follows them (its Tracker, swing and floor). The swing is
@@ -32,11 +32,12 @@ CYCLES = 6  # a window's length, in cycles of the loudest frequency
 HOPS = 4    # windows per window length: each starts a quarter of a window after the last
 # below this many frames per swing the speed test warns: a resonance above half the frame rate folds back and reads as
 # a slower one. Down to 2.4 frames per swing (100 Hz at 240 frames a second) it read the frequency within 0.6 % and the
-# swing in full on generated films (tests); the tap test's damping ratio needs six (free_decay.py)
+# swing in full on generated videos (tests); the tap test's damping ratio needs four (free_decay.FEW_FRAMES)
 NEAR_HALF = 2.5
-EDGE = 0.003  # the largest swing within 0.3 % of the lowest or highest frequency filmed is at the edge of the speeds
-              # covered: at one steady speed the windows differ by about 0.03 % (the audit's stepped film), while a
-              # coast-down's neighbouring windows above the floor differ by about 1 % (tests)
+# a resonance counts as found inside the speeds filmed when the swing falls to 1/sqrt(2) of its largest on both sides
+# of it, the half-power points that bound a resonance's peak; otherwise it may lie beyond them, or the speeds were
+# stepped too coarsely around it
+HALF_POWER = 1 / np.sqrt(2)
 
 
 def window_length(x, fps):
@@ -52,7 +53,7 @@ def response(x, fps, floor):
     """Each window's middle (s), frequency (Hz) and amplitude (px), and whether its swing rises above the floor."""
     n = window_length(x, fps)
     if len(x) < 2 * n:
-        raise ValueError(Note("short", "the film is too short for a speed test: film at least a few seconds at each "
+        raise ValueError(Note("short", "the video is too short for a speed test: film at least a few seconds at each "
                               "speed, or the whole coast-down"))
     hop = max(1, n // HOPS)
     t, f, a = [], [], []
@@ -76,16 +77,28 @@ def resonance(f, a, above, fps):
     k = int(np.argmax(A))
     peak, size = float(F[k]), float(A[k])
     notes = []
-    near = EDGE * peak  # within this of the lowest or highest frequency filmed counts as at it
-    if len(F) > 1 and (peak - F.min() <= near or F.max() - peak <= near):
-        side = "lowest" if peak - F.min() <= F.max() - peak else "highest"
-        notes.append(Note("edge-peak", f"the swing is largest at the {side} frequency filmed ({peak:.2f} Hz): the "
-                          "resonance may lie beyond the speeds covered", side=side, f=peak))
+    for side, rest in (("below", a[f < peak]), ("above", a[f > peak])):
+        if not (rest <= HALF_POWER * size).any():
+            notes.append(Note("edge-peak", f"the swing does not fall to 71 % of its largest {side} {peak:.2f} Hz "
+                              "within the speeds filmed: the resonance may lie beyond them, or the speeds were stepped "
+                              "too coarsely around it", side=side, f=peak))
     if peak > fps / NEAR_HALF:
         notes.append(Note("near-half", f"the largest swing is at {peak:.1f} Hz, close to half the frame rate "
                           f"({fps / 2:g} Hz): a faster resonance would read as a slower one there; film at a higher "
                           "frame rate to be sure", f=peak, half=fps / 2))
     return peak, size, notes
+
+
+def resolution(f, a, above, near=10):
+    """How finely the windows place the resonance (Hz): the median change in frequency between consecutive windows
+    within `near` windows of the largest swing, leaving out changes under 0.1 % (windows at one held speed). A
+    coast-down's windows lie about (rate of slowing) x 1.5 / f^2 apart in relative frequency; stepped speeds, a step
+    apart."""
+    k = int(np.flatnonzero(above)[np.argmax(a[above])])
+    near_f = f[max(0, k - near):k + near + 1]
+    changes = np.abs(np.diff(near_f))
+    changes = changes[changes > 0.001 * f[k]]
+    return float(np.median(changes)) if len(changes) else 0.0
 
 
 def read(part, fixed, fps, min_peak=None):
@@ -119,7 +132,8 @@ def main():
           f"; jitter {noise:.3f} px; floor {floor:.2f} px")
     print(f"windows above the floor: {above.sum()} of {len(above)}, from {f[above].min():.2f} to "
           f"{f[above].max():.2f} Hz")
-    print(f"largest swing {size:.1f} px at {peak:.3f} Hz ({60 * peak:.0f} rpm if the part moves once a revolution)")
+    print(f"largest swing {size:.1f} px at {peak:.3f} Hz ({60 * peak:.0f} rpm if the part moves once a revolution); "
+          f"windows near it lie {resolution(f, a, above):.3f} Hz apart, the resolution")
     for w in notes:
         print(f"warning: {w}")
     if args.plot:

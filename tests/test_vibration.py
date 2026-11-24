@@ -1,4 +1,4 @@
-"""Tests: the readings on signals, films and files with known answers, and the download against a local server.
+"""Tests: the readings on signals, videos and files with known answers, and the download against a local server.
 
 Run from the repository folder: python3 -m unittest discover tests
 
@@ -79,9 +79,11 @@ class Readings(unittest.TestCase):
         *_, warnings = free_decay.measure(ring(2.0, 0.02, 60, 3), 60, floor=1.0)  # cut before rest
         note = next(w for w in warnings if w.code == "still-swinging")
         self.assertTrue(note.startswith("the part still swings"))  # printed as before
-        *_, warnings = free_decay.measure(ring(12.0, 0.02, 60, 8), 60, floor=1.0)
+        *_, warnings = free_decay.measure(ring(18.0, 0.02, 60, 8), 60, floor=1.0)  # 3.3 frames per swing
         note = next(w for w in warnings if w.code == "few-frames")
-        self.assertAlmostEqual(note.values["per_swing"], 5, delta=0.01)
+        self.assertAlmostEqual(note.values["per_swing"], 60 / 18, delta=0.01)
+        *_, warnings = free_decay.measure(ring(12.0, 0.02, 60, 8), 60, floor=1.0)  # 5: no warning now
+        self.assertNotIn("few-frames", [w.code for w in warnings])
 
     def test_a_long_quiet_tail_does_not_hide_the_frequency(self):
         # 40 Hz at 240 fps, filmed for 5 s: the ringing is over in 0.3 s; the rest is noise
@@ -169,7 +171,7 @@ class Readings(unittest.TestCase):
         t_sig = np.arange(fs * seconds) / fs
         w = 2 * np.pi * 100
         force = 2.0 * np.sin(w * t_sig)
-        acc = -w ** 2 * 1e-6 * np.sin(w * t_sig - 0.3)  # the acceleration of 1 micrometre, 0.3 rad behind the force
+        acc = -w ** 2 * 1e-6 * np.sin(w * t_sig - 0.3)  # the acceleration of 1 micrometer, 0.3 rad behind the force
         f, _, H, _ = check_printer_bed.responses(np.zeros((1, fps * seconds)), force, acc, fps, fs)
         k = np.argmin(abs(f - 100))
         self.assertAlmostEqual(abs(H[k]), 0.5e-6, delta=1e-9)
@@ -208,10 +210,15 @@ class SpeedTest(unittest.TestCase):
         peak, size, notes = self.read(make_test_clip.coast_down(105.0, 0.02, 40.0, 115.0, 60.0, 20), 20)
         self.assertEqual([n.code for n in notes], ["near-half"])
 
+    def test_the_resolution_is_the_spacing_of_windows_near_the_peak(self):
+        f = np.array([10.0, 10.0, 10.0, 11.0, 11.0, 12.0, 12.0, 12.0, 13.0, 13.0])  # stepped a hertz apart
+        a = np.array([1, 1, 1, 3, 3, 9, 9, 9, 3, 3.0])
+        self.assertAlmostEqual(speed_test.resolution(f, a, a > 0.5), 1.0)
+
     def test_a_resonance_beyond_the_speeds_filmed_is_warned_about(self):
         peak, size, notes = self.read(make_test_clip.coast_down(25.0, 0.02, 40.0, 20.0, 6.0, 20), 20)
         self.assertEqual([n.code for n in notes], ["edge-peak"])
-        self.assertEqual(notes[0].values["side"], "highest")
+        self.assertEqual(notes[0].values["side"], "above")  # the swing still grows at the top speed filmed
 
     def test_a_swing_below_the_floor_is_not_read(self):
         with self.assertRaises(ValueError) as caught:
@@ -314,11 +321,11 @@ class Films(unittest.TestCase):
                 free_decay.track(free_decay.read_video(out)[1], [make_test_clip.first_tip(40.0)], report=True)
             self.assertNotIn("warning", printed.getvalue())
 
-    def test_plain_grey_has_too_little_texture(self):
-        grey = [np.clip(128 + np.random.default_rng(k).normal(0, 2, (120, 160)), 0, 255).astype(np.uint8)
+    def test_plain_gray_has_too_little_texture(self):
+        gray = [np.clip(128 + np.random.default_rng(k).normal(0, 2, (120, 160)), 0, 255).astype(np.uint8)
                 for k in range(3)]
         with self.assertRaises(SystemExit) as caught:
-            free_decay.track(grey, [(80, 60)])
+            free_decay.track(gray, [(80, 60)])
         self.assertEqual(caught.exception.args[0].code, "texture")
 
     def test_a_ring_down_that_grows_is_not_read(self):
@@ -457,7 +464,7 @@ class AuditCases(unittest.TestCase):
         part = np.zeros((n, 2))
         part[:, 0] = 30 * np.exp(-2 * np.pi * 10 * 0.02 * t) * np.cos(2 * np.pi * 10 * t)
         fixed = np.zeros((n, 2))
-        part[[2, 3, 4, 8, 9]] = np.nan  # 0.5 % of the film, where the first peaks are
+        part[[2, 3, 4, 8, 9]] = np.nan  # 0.5 % of the video, where the first peaks are
         x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, fixed, fps)
         self.assertIn("lost-some", [w.code for w in warnings])
 
@@ -471,8 +478,56 @@ class AuditCases(unittest.TestCase):
         self.assertIsNone(free_decay.uneven(even))
         changed = np.concatenate([np.arange(50) * (1000 / 60), 50 * (1000 / 60) + np.arange(1, 51) * (1000 / 30)])
         self.assertEqual(free_decay.uneven(changed).code, "uneven")
+class AuditOfLimits(unittest.TestCase):
+    """The limits an independent audit (24 Nov 2026) found tuned on drawn videos, restated from physics."""
+
+    def test_the_noise_of_a_ringing_swing_is_measured_on_it(self):
+        x = ring(10.0, 0.02, 240, 4, amplitude=5.0, noise=0.05)
+        self.assertAlmostEqual(free_decay.noise_in(x), 0.05, delta=0.008)
+
+    def test_the_signal_to_noise_ratio_and_its_precision(self):
+        fps, n = 240, 960
+        part = np.zeros((n, 2))
+        part[:, 0] = ring(10.0, 0.02, fps, n / fps, amplitude=5.0, noise=0.05)
+        x, noise, floor, readings = free_decay.read(part, np.zeros_like(part), fps)
+        snr = free_decay.signal_to_noise(x, fps, floor, readings)
+        self.assertAlmostEqual(snr["ratio"], 100, delta=15)  # 5 px over 0.05 px
+        d = snr["ratio"] * np.sqrt(fps / (8 * np.pi * readings[2] * readings[1]))
+        self.assertAlmostEqual(snr["d"], d)
+        self.assertAlmostEqual(snr["damping"], 2 / d)
+
+    def test_four_frames_per_swing_read_the_damping_ratio_in_any_phase(self):
+        for phase in np.linspace(0, 2 * np.pi, 8, endpoint=False):
+            t = np.arange(240 * 4) / 240
+            wn = 2 * np.pi * 60
+            x = 5 * np.exp(-0.02 * wn * t) * np.cos(wn * np.sqrt(1 - 0.02 ** 2) * t + phase)
+            self.assertAlmostEqual(free_decay.measure(x, 240, 1.0)[2], 0.02, delta=0.02 * 0.015)
+
+    def test_one_resonance_with_noise_is_not_called_bent(self):
+        *_, warnings = free_decay.measure(ring(5.0, 0.01, 60, 30, amplitude=20.0, noise=0.05), 60, floor=1.0)
+        self.assertNotIn("not-straight", [w.code for w in warnings])
+
+    def test_damping_that_changes_as_the_part_rings_down_is_called_bent(self):
+        t = np.arange(60 * 12) / 60
+        w = 2 * np.pi * 5.0
+        fall = np.where(t < 1.5, 0.03 * w * t, 0.03 * w * 1.5 + 0.01 * w * (t - 1.5))  # 0.03, then 0.01
+        *_, warnings = free_decay.measure(20 * np.exp(-fall) * np.cos(w * t), 60, floor=1.0)
+        note = next(w for w in warnings if w.code == "not-straight")
+        self.assertGreater(note.values["z1"], note.values["z2"])
+
+    def test_a_step_too_large_for_the_tracker_is_warned_about(self):
+        fps, n = 60, 600
+        part = np.zeros((n, 2))
+        part[:, 0] = ring(14.0, 0.02, fps, n / fps, amplitude=12.0)  # up to 2 pi x 12 x 14 / 60, about 17 px a frame
+        _, _, _, readings = free_decay.read(part, np.zeros_like(part), fps)
+        self.assertNotIn("fast-step", [w.code for w in readings[-1]])
+        part[:, 0] *= 4  # about 70 px a frame
+        _, _, _, readings = free_decay.read(part, np.zeros_like(part), fps)
+        self.assertIn("fast-step", [w.code for w in readings[-1]])
+
+
 class BelowAPixel(unittest.TestCase):
-    """A swing too small for the damping ratio: the frequency alone when a ring stands out of the film's quiet end."""
+    """A swing too small for the damping ratio: the frequency alone when a ring stands out of the video's quiet end."""
 
     def film(self, ring, seconds=30.0, fps=25.0, hz=3.7, seed=0):
         """The two points' shifts (px): a ring of first swing ring x 0.01 px after a tap at 5 s, in jitter of 0.01 px
@@ -499,7 +554,7 @@ class BelowAPixel(unittest.TestCase):
         self.assertEqual(e.exception.args[0].code, "below-floor")
 
     def test_a_film_with_no_quiet_end_is_refused(self):
-        part, fixed, fps = self.film(30, seconds=6.0)  # the film stops a second after the tap
+        part, fixed, fps = self.film(30, seconds=6.0)  # the video stops a second after the tap
         with self.assertRaises(ValueError):
             free_decay.read(part, fixed, fps)
 

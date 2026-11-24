@@ -1,9 +1,9 @@
-"""Natural frequency and damping from a high-speed film of a shaken plate, checked against an accelerometer.
+"""Natural frequency and damping from a high-speed video of a shaken plate, checked against an accelerometer.
 
 Data: the printer-bed dataset, version 1 (Gorjup, Zaletelj, Slavič 2026, Zenodo, doi:10.5281/zenodo.21476609,
 CC BY 4.0): a 3D printer's bed hung on cords and shaken by a shaker with a sine sweep, filmed at 1,000 frames a
 second (384 x 384 px) from two sides in turn, with the force and the acceleration measured where the shaker meets
-the plate (an impedance head) recorded with each film. The record describes the sweep as 60-300 Hz; in the force
+the plate (an impedance head) recorded with each video. The record describes the sweep as 60-300 Hz; in the force
 signal it rises from 60 Hz at about 0.1 s past 300 Hz at about 1.45 s to about 500 Hz near the end of the 2 s record.
 This script reads 60-300 Hz (SWEEP). --download fetches and unpacks the two archives it needs (about 450 MB, and about
 1 GB on disk once unpacked), checked against the checksums the Zenodo record publishes.
@@ -17,7 +17,7 @@ the accelerometer, in two ways:
   - fit: one resonance plus a constant and a 1/w^2 term (the resonances above and below the band) fitted to the
     complex response in a band around it;
   - ring-down: the band turned back into an impulse response (how the plate would ring after an ideal knock), then
-    read by free_decay.py's frequency() and damping(), as the tap test reads a film.
+    read by free_decay.py's frequency() and damping(), as the tap test reads a video.
 
 The camera's motion comes from one of two readings (--reading):
   - tracker: free_decay.py's feature tracker on a 6 x 6 grid of points on the plate, x and y;
@@ -76,7 +76,7 @@ def md5(path):
 
 
 def complete(folder, needed=NEEDED):
-    """Whether every file needed is there, each film whole (an interrupted unpack leaves a short .mraw)."""
+    """Whether every file needed is there, each video whole (an interrupted unpack leaves a short .mraw)."""
     folder = Path(folder)
     if not all((folder / name).exists() for name in needed):
         return False
@@ -227,7 +227,7 @@ def impulse_response(f, H, lo, hi, fps, n=None):
 
 
 def ring_down(f, H, lo, hi, fps, n=None):
-    """The band's impulse response read as a tap test reads a film: (frequency Hz, damping ratio, peaks)."""
+    """The band's impulse response read as a tap test reads a video: (frequency Hz, damping ratio, peaks)."""
     fd, x, _ = impulse_response(f, H, lo, hi, fps, n)
     try:
         zeta, _, peaks, _ = free_decay.damping(x, fps, fd, floor=0.05 * np.abs(x).max())
@@ -254,7 +254,7 @@ def tracker_channels(frames, view):
 
 
 def brightness_channels(frames, view):
-    """The brightness of the steepest tenth of the plate's pixels (grey levels), one channel per row."""
+    """The brightness of the steepest tenth of the plate's pixels (gray levels), one channel per row."""
     x0, x1, y0, y1 = GRIDS[view]
     first = frames[0].astype(np.float32)
     slope = np.hypot(cv2.Sobel(first, cv2.CV_32F, 1, 0), cv2.Sobel(first, cv2.CV_32F, 0, 1)) / 8
@@ -270,21 +270,21 @@ def responses(signals, force, acc, fps, fs):
     are displacement per force, the form mode_fit's model and its two residual terms are written for."""
     n = signals.shape[1]
     if abs(n / fps - len(force) / fs) > 1 / fs:  # one signal sample of slack
-        raise SystemExit("film and signals differ in length")
+        raise SystemExit("the video and the signals differ in length")
     f = np.fft.rfftfreq(n, 1 / fps)  # same bins as the signals' over the same time
     F = np.fft.rfft(force)[: len(f)]
     X = np.fft.rfft(signals - signals.mean(axis=1, keepdims=True), axis=1) * (fs / fps)  # same scale as F
     w2 = (2 * np.pi * f) ** 2
     head = -np.fft.rfft(acc)[: len(f)] / F / np.where(w2 > 0, w2, np.inf)  # m / N, 0 at 0 Hz
-    return f, X, head, X / F  # m / N; px / N or grey levels / N
+    return f, X, head, X / F  # m / N; px / N or gray levels / N
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Resonances of the printer-bed plate from its films, against an "
+    ap = argparse.ArgumentParser(description="Resonances of the printer-bed plate from its videos, against an "
                                              "accelerometer.")
     ap.add_argument("dataset", nargs="?", default="printer-bed-v1", help="folder with mraw/ and measured_signals/")
     ap.add_argument("--download", action="store_true", help="fetch and unpack the data into that folder first")
-    ap.add_argument("--view", type=int, choices=(0, 1), default=0, help="which of the two films")
+    ap.add_argument("--view", type=int, choices=(0, 1), default=0, help="which of the two videos")
     ap.add_argument("--reading", choices=("tracker", "brightness"), default="tracker")
     ap.add_argument("--plot", help="save both responses to this image")
     args = ap.parse_args()
@@ -307,7 +307,7 @@ def main():
     rms = np.sqrt(2 * (np.abs(X[:, shaken] * (fps / fs)) ** 2).sum(axis=1)) / n  # each channel, in the sweep read
     if args.reading == "tracker":
         rms = np.sqrt(rms[: len(rms) // 2] ** 2 + rms[len(rms) // 2:] ** 2)  # x and y of each point together
-    what, unit = ("motion", "px") if args.reading == "tracker" else ("brightness change", "grey levels")
+    what, unit = ("motion", "px") if args.reading == "tracker" else ("brightness change", "gray levels")
     print(f"view {args.view}, {label}: {n} frames at {fps:g} fps, read in {time.time() - t0:.1f} s; "
           f"{what} in the shaken band ({lo_sweep}-{hi_sweep} Hz) {rms.min():.3f}-{rms.max():.3f} {unit} rms")
 

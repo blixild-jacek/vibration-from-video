@@ -27,7 +27,7 @@ FIXED = (104, 84)   # the middle of the patch that does not move, px
 
 
 
-LEAD = 120.0  # s: the longest steady run driven() integrates before the film starts
+LEAD = 120.0  # s: the longest steady run driven() integrates before the video starts
 
 def first_tip(amplitude, scale=1):
     """The middle of the swinging patch in the first frame of a ring-down, where the swing starts, px."""
@@ -134,7 +134,7 @@ def main():
     ap.add_argument("--amplitude", type=float, default=40.0, help="first swing, pixels")
     ap.add_argument("--fps", type=float, default=60.0)
     ap.add_argument("--seconds", type=float, default=15.0)
-    ap.add_argument("--noise", type=float, default=2.0, help="sensor noise, grey levels")
+    ap.add_argument("--noise", type=float, default=2.0, help="sensor noise, gray levels")
     drive = ap.add_mutually_exclusive_group()
     drive.add_argument("--coast-down", type=float, nargs=2, metavar=("START", "END"),
                        help="a machine coasting down from START to END Hz drives the part, instead of a tap")
