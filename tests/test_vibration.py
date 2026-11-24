@@ -751,9 +751,10 @@ class OutlinePoint(unittest.TestCase):
         # the stretch, where the noise may happen to be steepest, is not taken for it
         tracker = free_decay.Tracker(self.edge_frame(100.0), [(100, 100)], outline=(0,))
         rng = np.random.default_rng(0)
+        dark = [np.full((200, 200), 20, np.uint8)] + [rng.normal(20, 2, (200, 200)).clip(0, 255).astype(np.uint8)
+                                                       for _ in range(3)]  # flat, then noisy
         for i in range(40):
-            dark = rng.normal(20, 2, (200, 200)).clip(0, 255).astype(np.uint8)
-            tracker.step(dark if i % 10 == 5 else self.edge_frame(100.0 + 0.5 * np.sin(i)))
+            tracker.step(dark[i // 10] if i % 10 == 5 else self.edge_frame(100.0 + 0.5 * np.sin(i)))
         read = tracker.shifts()[0][1:, 1]
         self.assertTrue(np.isnan(read[5::10]).all())
         self.assertEqual(tracker.far(), [])

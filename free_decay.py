@@ -342,8 +342,8 @@ class Outline:
     def position(self, crop):
         """The edge's position along the normal (px), sub-pixel: its strongest step of the first frame's sign,
         refined by a parabola; NaN when the whole step is under half the first frame's (the edge hidden or gone, a
-        hand passing, a dark frame), or when a step that strong lies at lo or hi, where the edge may be beyond the
-        stretch searched."""
+        dark frame), or when a step that strong lies at lo or hi, where the edge may be beyond the stretch searched.
+        Something passing in front with a step of the same sign inside the stretch is taken for the edge."""
         d = self.sign * self.steps(crop)
         k = int(np.nanargmax(d))
         if self.step(d, k) < 0.5 * self.strength:
@@ -382,8 +382,9 @@ def faint_warning(p):
 def far_warning(p, reach=REACH, outline=False):
     if outline:  # Outline.near_end(): the edge near the end of the stretch searched, reach px from where it was found
         return Note("far", f"the edge through ({p[0]}, {p[1]}) came within {OUTLINE_FAR} px of the end of the "
-                    f"{OUTLINE_REACH} px searched either side of the point, {reach} px from where it was first found: "
-                    "pick the point on the edge itself, and if the part swings that far, film from further away",
+                    f"stretch searched for it ({OUTLINE_REACH} px either side of the point, or the frame's edge), "
+                    f"{reach} px from where it was first found: pick the point on the edge itself, or, if the part "
+                    "swings that far, film from further away or with the part further inside the frame",
                     x=p[0], y=p[1], reach=reach, outline=True)
     return Note("far", f"the part around ({p[0]}, {p[1]}) moved more than {reach} px, near the edge of the window the "
                 "tracker follows it in: film from further away", x=p[0], y=p[1], reach=reach)

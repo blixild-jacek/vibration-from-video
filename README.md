@@ -248,13 +248,13 @@ requirements.txt:
   which is near a resonance.
 - **Motion toward the camera.** One camera sees only motion across the picture. Millimeters, and motion along the
   line of sight, need a second camera.
-- **Two resonances close together.** The decrement and the fit below a pixel assume one resonance. Where two share
-  a band, the damping ratio can come out wrong either way: in one of the printer-bed videos the ring-down read almost
-  no damping at 126 and 215 Hz, where the fit read 0.013 and 0.021; two simulated resonances 5 % apart (3.7 and
-  3.9 Hz, both at 0.01) beat and read anywhere from 0.010 to 0.044 depending on their phases, mostly high and mostly
-  with no warning, above a pixel and below it (two audits' probes, not in this repository). The script warns when the
-  first and second halves give damping ratios further apart than their scatter allows, which beating does not always
-  set off.
+- **Two resonances close together.** The decrement and the fit below a pixel assume one resonance. Where two share a
+  band, the damping ratio can come out wrong either way: in one of the printer-bed videos the ring-down read almost no
+  damping at 126 and 215 Hz, where the fit read 0.013 and 0.021; two simulated resonances 5 % apart (3.7 and 3.9 Hz,
+  both at 0.01) beat and read anywhere from almost no damping (0.0003) to 0.066 depending on their phases, mostly high
+  and mostly with no warning, above a pixel and below it (two audits' probes, not in this repository). The script
+  warns when the first and second halves give damping ratios further apart than their scatter allows, which beating
+  does not always set off.
 - **Every surface.** The tracker needs texture, such as corners, bolts or a sticker; a turning part is followed by its
   outline instead (`--outline`). Plain or shiny surfaces, glare, motion blur and flickering light are not covered by
   the tests. The tap test has read six real videos, of a frame struck with a hammer in the CAMELOT benchmark
