@@ -258,8 +258,11 @@ class Tracker:
     def far(self):
         """The points that moved more than REACH px from where they started, near the edge of their window, where
         the tracker may lose them (an outline point: OUTLINE_REACH less 2 px, near the end of its profile)."""
-        return [p for i, (p, r) in enumerate(zip(self.points, self.reach))
-                if len(r) and r.max() > (OUTLINE_REACH - 2 if i in self.outline else REACH)]
+        return [p for p, r in zip(self.points, self.reach) if len(r) and r.max() > self.far_limit(p)]
+
+    def far_limit(self, p):
+        """How far (px) point p may move before far() warns: REACH, or OUTLINE_REACH less 2 for an outline point."""
+        return OUTLINE_REACH - 2 if self.points.index(tuple(p)) in self.outline else REACH
 
     def mixed(self):
         """The points whose square holds corners that moved and corners that stayed still, which suggests it covers
@@ -333,9 +336,9 @@ def faint_warning(p):
                 "sharper detail, or add a sticker", x=p[0], y=p[1])
 
 
-def far_warning(p):
-    return Note("far", f"the part around ({p[0]}, {p[1]}) moved more than {REACH} px, near the edge of the window the "
-                "tracker follows it in: film from further away", x=p[0], y=p[1], reach=REACH)
+def far_warning(p, reach=REACH):
+    return Note("far", f"the part around ({p[0]}, {p[1]}) moved more than {reach} px, near the edge of the window the "
+                "tracker follows it in: film from further away", x=p[0], y=p[1], reach=reach)
 
 
 def mixed_warning(p):
@@ -363,7 +366,7 @@ def track(frames, points, box=BOX, report=False, outline=()):
         tracker.step(gray)
     if report:
         for p in tracker.far():
-            print(f"warning: {far_warning(p)}")
+            print(f"warning: {far_warning(p, tracker.far_limit(p))}")
         for p in tracker.mixed():
             print(f"warning: {mixed_warning(p)}")
     return tracker.shifts()
