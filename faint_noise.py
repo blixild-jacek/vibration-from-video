@@ -1,5 +1,6 @@
 """How free_decay.faint() behaves on simulated swings: on noise alone, how high its ratio gets (which sets
-free_decay.FAINT_RATIO), and how small a ring it finds and how close its frequency comes.
+free_decay.FAINT_RATIO), and how small a ring it finds and how close its frequency comes; and how close
+free_decay.faint_damping() reads the damping ratio below the floor (which sets free_decay.FIT_D).
 
 The swing is white tracker jitter (standard deviation 1) plus a slow drift, a random walk scaled to a given multiple of
 the jitter. A ring is a tap: a damped sine starting at 5 s, its first swing a given multiple of the jitter. Nothing in
@@ -8,6 +9,8 @@ it comes from a real video, so the threshold is fixed before any real video is r
 Usage:
   python3 faint_noise.py              the tables: 1,000 noise-only swings a case, 200 unsteady ones, 100 rings
   python3 faint_noise.py --quick      a tenth of that
+  python3 faint_noise.py --damping    free_decay.faint_damping() on simulated rings of a minute: its accuracy by the
+                                      ring-down's d (which sets free_decay.FIT_D) and the halves' false alarms
 
 SPDX-License-Identifier: MIT
 Copyright (c) 2026 Jacek Garbuliński Blixild, blixild.com
@@ -117,12 +120,91 @@ def ring_table(rng, count, drift=5):
             print(f"{hz:5g} {fps:5g} {ring:11d}  {share:5.0%}  {err}", flush=True)
 
 
+DAMPING_CASES = ((3.0, 25.0), (3.7, 25.0), (12.3, 60.0), (47.0, 240.0), (90.0, 240.0))  # Hz, fps: as ring_table
+
+
+def damping_rows(rng, count, zetas=(0.005, 0.01, 0.02, 0.05), rings=(10, 20, 50, 100, 200), drifts=(5, 30)):
+    """free_decay.faint_damping() on simulated rings that faint() finds: per ring, (Hz, fps, zeta, ring, drift, d, the
+    fit's own relative standard error of the decay, the relative error of the damping ratio read, whether the halves
+    differ). Each swing lasts a minute, the strike at 5 s, so a lightly damped ring has room to die away and a quiet end
+    after it, as real recordings do. Nothing in it comes from a real video."""
+    rows = []
+    for hz, fps in DAMPING_CASES:
+        for zeta in zetas:
+            for ring in rings:
+                for drift in drifts:
+                    for _ in range(count):
+                        x = swing(rng, fps, 60.0, drift, ring, hz, zeta)  # a minute: a ring and a quiet end
+                        found = free_decay.faint(x, fps)
+                        if not free_decay.passes(found, fps):
+                            continue
+                        f, _, seconds, a, b, _ = found
+                        noise = free_decay.noise_in(free_decay.drift_off(x, fps)[len(x) - free_decay.FAINT_QUIET * (b - a):])
+                        got = free_decay.faint_damping(x, fps, f, a, b, noise)
+                        if got is None:
+                            rows.append((hz, fps, zeta, ring, drift, 0.0, np.inf, np.inf, False, 0.0, 0.0))
+                            continue
+                        z, d, halves, rel = got[0], got[1], got[2], got[3]
+                        rows.append((hz, fps, zeta, ring, drift, d, rel, z / zeta - 1, bool(halves and halves[2]),
+                                     halves[3] if halves else 0.0, halves[4] if halves else 0.0))
+    return np.array(rows, dtype=float)
+
+
+def damping_table(rng, count, within=0.15, share=0.95):
+    """The gate for faint_damping(): for d (the ring-down's signal-to-noise figure) and for the fit's own relative
+    standard error, the bar at which `share` of the readings past it lie within `within` of the damping ratio the ring
+    was made with, and how many readings each bar keeps; and the halves' false alarms on these clean rings."""
+    rows = damping_rows(rng, count)
+    d, rel, err, halves = rows[:, 5], rows[:, 6], np.abs(rows[:, 7]), rows[:, 8].astype(bool)
+    print(f"Damping below the floor: {len(rows)} simulated rings found by faint(), {np.isfinite(err).sum()} fitted")
+    print("bar on d       kept   95 % within")
+    best_d = None
+    for bar in (5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000):
+        keep = d >= bar
+        q = np.quantile(err[keep], share) if keep.any() else np.nan
+        print(f"  d >= {bar:5g}  {keep.sum():6d}  {100 * q:6.1f} %")
+        if best_d is None and q <= within and all(np.quantile(err[d >= b2], share) <= within
+                                                  for b2 in (5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000)
+                                                  if b2 > bar and (d >= b2).any()):
+            best_d = bar
+    print("bar on the fit's own relative error   kept   95 % within")
+    best_rel = None
+    for bar in (0.30, 0.20, 0.15, 0.10, 0.07, 0.05, 0.03, 0.02, 0.01):
+        keep = rel <= bar
+        q = np.quantile(err[keep], share) if keep.any() else np.nan
+        print(f"  rel <= {bar:4.2f}  {keep.sum():6d}  {100 * q:6.1f} %")
+        if best_rel is None and q <= within and all(np.quantile(err[rel <= b2], share) <= within
+                                                    for b2 in (0.30, 0.20, 0.15, 0.10, 0.07, 0.05, 0.03, 0.02, 0.01)
+                                                    if b2 < bar and (rel <= b2).any()):
+            best_rel = bar
+    for name, keep in (("d", d >= (best_d or np.inf)), ("rel", rel <= (best_rel or -1))):
+        print(f"gate on {name}: keeps {keep.sum()} of {len(rows)}; halves differ on {halves[keep].mean():.1%} of the kept"
+              if keep.any() else f"gate on {name}: none passes")
+    print("halves: false alarms on these clean rings, by the bars (combined standard errors, share of the mean)")
+    for sig in (3.0, 4.0, 5.0):
+        print(f"  {sig:g} sigma: " + "  ".join(f"share {sh:.1f}: {np.mean((rows[:, 9] > sig) & (rows[:, 10] > sh)):5.1%}"
+                                             for sh in (0.2, 0.3, 0.4, 0.5)))
+    print("by case at the d gate (kept / found, 95 % within):")
+    keep = d >= (best_d or np.inf)
+    for hz, fps in DAMPING_CASES:
+        for zeta in (0.005, 0.01, 0.02, 0.05):
+            m = (rows[:, 0] == hz) & (rows[:, 2] == zeta)
+            k = m & keep
+            q = f"{100 * np.quantile(err[k], share):5.1f} %" if k.any() else "    -"
+            print(f"  {hz:5g} Hz {fps:4g} fps zeta {zeta:5.3f}: {k.sum():4d} / {m.sum():4d}  {q}")
+    return best_d, best_rel
+
+
 def main():
     ap = argparse.ArgumentParser(description="free_decay.faint() on simulated noise and rings.")
     ap.add_argument("--quick", action="store_true", help="a tenth of the videos")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--damping", action="store_true", help="only the damping ratio below the floor (faint_damping())")
     args = ap.parse_args()
     rng = np.random.default_rng(args.seed)
+    if args.damping:
+        damping_table(rng, 5 if args.quick else 30)
+        return
     noise_table(rng, 100 if args.quick else 1000)
     unsteady_table(rng, 20 if args.quick else 200)
     ring_table(rng, 10 if args.quick else 100)

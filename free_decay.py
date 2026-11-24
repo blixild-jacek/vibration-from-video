@@ -608,6 +608,93 @@ def faint(x, fps, lengths=FAINT_LENGTHS, quiet=FAINT_QUIET):
     return max(passing, key=lambda f: f[2]) if passing else max(found, key=lambda f: f[1], default=None)
 
 
+# Below the floor, the damping ratio too, from a fit (24 Nov 2026, after a real struck frame that swung 0.74 px read
+# "damping ratio: not read" while its chart showed the ring dying away). Peak by peak, a swing under the floor carries
+# the tracker's error in every peak; a decaying wave fitted to every frame of the ring averages that error, as the
+# frequency's spectrum does. The stretch is faint()'s, band-passed around its frequency (FIT_BAND times it); the reading
+# stands only when the ring-down's d (signal_to_noise()) reaches FIT_D, and the stretch's two halves are fitted apart
+# and compared as the peaks' halves are, since a structure's damping can change as its swing dies away. FIT_D and the
+# halves' bar come from simulated rings alone (faint_noise.py --damping), fixed before any unseen video was read.
+FIT_BAND = (0.6, 1.5)
+FIT_ABOVE = 3.0  # the fit runs until the fitted envelope falls to this many times the band's noise
+FIT_CYCLES = 8  # the fewest cycles fitted
+FIT_HALVES = (3.0, 0.2)  # the halves differ: by more than this many combined standard errors and this share
+FIT_D = 30.0  # the ring-down's d below which the damping ratio is not read: on simulated rings (faint_noise.py
+              # --damping), 95 % of fits with d of 30 to 50 lay within 13.4 % of the damping ratio set, of 20 to 30
+              # within 17.3 %: from 30, a reading at the gate is within 15 % in 95 % of cases
+
+
+def wave(t, a, decay, hz, phase, offset):
+    """A decaying wave: amplitude a, decay (1/s), frequency hz, phase and offset, at times t (s)."""
+    return a * np.exp(-decay * t) * np.sin(2 * np.pi * hz * t + phase) + offset
+
+
+def fit_ring(y, fps, hz, zeta0=0.02):
+    """wave() fitted to y by least squares, from a start whose amplitude, phase and offset are the linear fit for a
+    decay of zeta0 at hz: (a, decay, hz, phase, offset) and their covariance, or None when it does not converge."""
+    from scipy.optimize import curve_fit
+    t = np.arange(len(y)) / fps
+    for z in (zeta0, 0.005, 0.05):
+        decay = z * 2 * np.pi * hz
+        e = np.exp(-decay * t)
+        basis = np.stack([e * np.sin(2 * np.pi * hz * t), e * np.cos(2 * np.pi * hz * t), np.ones_like(t)], 1)
+        (s_, c_, o_), *_ = np.linalg.lstsq(basis, y, rcond=None)
+        try:
+            fit, cov = curve_fit(wave, t, y, p0=[np.hypot(s_, c_), decay, hz, np.arctan2(c_, s_), o_], maxfev=5000)
+        except (RuntimeError, ValueError):
+            continue
+        if np.isfinite(cov).all() and fit[1] > 0 and 0 < fit[2] < fps / 2:
+            if fit[0] < 0:  # the same wave with its phase turned half a cycle
+                fit[0], fit[3] = -fit[0], fit[3] + np.pi
+            return fit, cov
+    return None
+
+
+def faint_damping(x, fps, hz, start, end, noise):
+    """The damping ratio of a ring below the floor, from wave() fitted to every frame of the ring, band-passed around
+    hz (FIT_BAND): first over faint()'s stretch x[start:end], then from start until that fit's envelope falls to
+    FIT_ABOVE times the band's noise (at least FIT_CYCLES cycles), so that all of the ring that stands out is used, as
+    the peaks above the floor are.
+    Returns (zeta, its ring-down's d, halves, the fit's relative standard error of the decay, the seconds fitted), where
+    halves is (zeta of the first half of those seconds, of the second, whether they differ by more than FIT_HALVES
+    times their combined standard error and by more than its share of their mean, and those two figures), or None
+    when a half does not fit; None when the fit fails
+    or does not decay. noise: the swing's noise (px a frame), as signal_to_noise() takes it. Band-passed noise is
+    correlated from frame to frame, so the fits' standard errors are widened by sqrt(fps / (2 x the band's width)).
+    The gate (FIT_D) is read()'s."""
+    from scipy.signal import butter, sosfiltfilt
+    lo, hi = FIT_BAND[0] * hz, min(FIT_BAND[1] * hz, 0.45 * fps)
+    if not 0 < lo < hi or not noise > 0:
+        return None
+    y = sosfiltfilt(butter(2, [lo, hi], "bandpass", fs=fps, output="sos"), x)
+    band_noise = noise * np.sqrt(2 * (hi - lo) / fps)  # white noise's share in the band
+    widen = np.sqrt(fps / (2 * (hi - lo)))
+    got = fit_ring(y[start:end], fps, hz)
+    if got is None:
+        return None
+    (a, decay, f, _, _), _ = got
+    last = len(y) - 2 * int(np.ceil(fps / f))  # the filter's own edge left out
+    span = np.log(a / (FIT_ABOVE * band_noise)) / decay if a > FIT_ABOVE * band_noise else 0.0
+    stop = int(min(last, start + max(span, FIT_CYCLES / f) * fps))  # where the ring meets the noise, not the
+    # stretch faint() compared with the quiet end: a well-damped ring dies within it, and a half of noise fits nothing
+    got = fit_ring(y[start:stop], fps, f)
+    if got is None:
+        return None
+    (a, decay, f, _, _), cov = got
+    to_zeta = lambda d_, f_: d_ / np.hypot(d_, 2 * np.pi * f_)
+    zeta = to_zeta(decay, f)
+    d = a / noise * np.sqrt(fps / (8 * np.pi * zeta * f / np.sqrt(1 - zeta ** 2)))
+    half = (stop - start) // 2
+    parts = [fit_ring(y[start:start + half], fps, f), fit_ring(y[start + half:stop], fps, f)]
+    halves = None
+    if all(parts):
+        (s1, e1), (s2, e2) = ((q[0][1], widen * np.sqrt(q[1][1, 1])) for q in parts)
+        z1, z2 = to_zeta(s1, parts[0][0][2]), to_zeta(s2, parts[1][0][2])
+        sigmas, share = abs(s1 - s2) / np.hypot(e1, e2), abs(z1 - z2) / ((z1 + z2) / 2)
+        halves = (z1, z2, bool(sigmas > FIT_HALVES[0] and share > FIT_HALVES[1]), sigmas, share)
+    return zeta, d, halves, float(widen * np.sqrt(cov[1, 1]) / decay), (stop - start) / fps
+
+
 def passes(found, fps):
     """Whether faint()'s reading stands out of the noise: its ratio to the quiet stretches reaches FAINT_RATIO, its own
     peak over its median FAINT_OWN, and its frequency lies below half the frame rate."""
@@ -643,7 +730,7 @@ def signal_to_noise(x, fps, floor, readings):
     five cases checked, the frequency to 2 zeta / d and the damping ratio to 2 / d, as fractions. It is a bound: this
     script's own readings, from the peaks and a windowed spectrum, scattered several times more in simulation."""
     fd, fn, zeta, decrement, peaks, warnings = readings
-    only = [w for w in warnings if getattr(w, "code", "") == "frequency-only"]
+    only = [w for w in warnings if getattr(w, "code", "") in ("frequency-only", "damping-fit")]
     if only:  # the ring's first swing, against the noise of the quiet end it was measured against
         a, b = only[0].values["start"], only[0].values["end"]
         y = drift_off(x, fps)
@@ -689,8 +776,9 @@ def lost_note(part, fixed, span=None):
 def read(part, fixed, fps, min_peak=None):
     """The swing, the tracker's jitter, the floor and measure()'s readings, from the two points' shifts: what the
     script prints, for the command line and for a page that runs it. When the swing is too small for the damping ratio,
-    the frequency alone from faint(), with the damping ratio and the decrement NaN, no peaks and a "frequency-only"
-    warning; when no ring stands out either, measure()'s refusal."""
+    the frequency from faint(), and the damping ratio from faint_damping() with a "damping-fit" note when its d reaches
+    FIT_D, or else NaN with a "frequency-only" note (no peaks either way); when no ring stands out, measure()'s
+    refusal."""
     if len(part) < 12:
         raise ValueError(Note("few-swings", "too few frames to find a frequency: film longer"))
     x = swing(part, fixed)
@@ -706,12 +794,30 @@ def read(part, fixed, fps, min_peak=None):
         lost = np.isnan(part).any(axis=1) | np.isnan(fixed).any(axis=1)
         if lost[start:end].any() or lost[len(lost) - FAINT_QUIET * (end - start):].any():
             raise  # a gap bridged by a straight line can make a quiet end look flat, or a ring
-        readings = (fd, fd, float("nan"), float("nan"), np.array([], int), [Note(
-            "frequency-only", f"only the frequency is read: {SMALL[why].format(floor=floor)}, too few for the damping "
-            f"ratio, but the {seconds:g} s after the strike stand {ratio:.1f} times above the video's quiet end, where "
-            f"{FAINT_RATIO:g} is needed. For the damping ratio, film closer or tap harder",
-            why=why, floor=floor, seconds=seconds, ratio=ratio, start=start, end=end, needed=FAINT_RATIO)])
-        span = slice(start, end)
+        quiet = noise_in(drift_off(x, fps)[len(x) - FAINT_QUIET * (end - start):])
+        fit = faint_damping(x, fps, fd, start, end, quiet)
+        if fit and fit[1] >= FIT_D:  # the damping ratio from a decaying wave fitted to the ring
+            zeta, d, halves, _, fitted = fit
+            decrement = 2 * np.pi * zeta / np.sqrt(1 - zeta ** 2)
+            notes = [Note("damping-fit", f"{SMALL[why].format(floor=floor)}, too few for the damping ratio peak by peak, "
+                          f"so it is read from a decaying wave fitted to every frame of the {fitted:.1f} s after the "
+                          f"strike, where the ring stands out of the noise (its ring-down's d is {d:.0f}, where {FIT_D:g} "
+                          "is needed)", why=why, floor=floor, seconds=fitted, d=d, needed=FIT_D, start=start, end=end)]
+            if halves and halves[2]:
+                notes.append(Note("damping-changes", f"the first and second halves of those {fitted:.1f} s give damping "
+                                  f"ratios of {halves[0]:.4f} and {halves[1]:.4f}, further apart than their scatter "
+                                  "allows: the damping changes as the swing dies away, as in a bolted structure, so "
+                                  "give the damping ratio with the stretch it was read over", z1=halves[0], z2=halves[1],
+                                  seconds=fitted))
+            readings = (fd, fd / np.sqrt(1 - zeta ** 2), zeta, decrement, np.array([], int), notes)
+            span = slice(start, start + int(round(fitted * fps)))
+        else:
+            readings = (fd, fd, float("nan"), float("nan"), np.array([], int), [Note(
+                "frequency-only", f"only the frequency is read: {SMALL[why].format(floor=floor)}, too few for the "
+                f"damping ratio, but the {seconds:g} s after the strike stand {ratio:.1f} times above the video's quiet "
+                f"end, where {FAINT_RATIO:g} is needed. For the damping ratio, film closer or tap harder",
+                why=why, floor=floor, seconds=seconds, ratio=ratio, start=start, end=end, needed=FAINT_RATIO)])
+            span = slice(start, end)
     else:
         peaks, period = readings[4], fps / readings[0]
         span = slice(max(0, int(peaks[0] - period)), int(peaks[-1] + period) + 1)  # the peaks read, a swing each side
@@ -803,7 +909,8 @@ def main():
         print(f"damped natural frequency {fd:.3f} Hz; the damping ratio is not read")
     else:
         print(f"damped natural frequency {fd:.3f} Hz; natural frequency {fn:.3f} Hz")
-        print(f"logarithmic decrement {decrement:.4f}; damping ratio {zeta:.4f} (from {len(peaks)} peaks)")
+        print(f"logarithmic decrement {decrement:.4f}; damping ratio {zeta:.4f} " +
+              (f"(from {len(peaks)} peaks)" if len(peaks) else "(from a decaying wave fitted below the floor)"))
     snr = signal_to_noise(x, fps, floor, (fd, fn, zeta, decrement, peaks, warnings))
     print(f"signal-to-noise: the first swing, {snr['first']:.2f} px, is {snr['ratio']:.0f} times the swing's noise, "
           f"{snr['noise']:.3f} px" + (f"; noise alone allows at best +-{100 * snr['frequency']:.2g} % in the "

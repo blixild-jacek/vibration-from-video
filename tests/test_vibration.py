@@ -597,14 +597,42 @@ class BelowAPixel(unittest.TestCase):
         part[:, 0] = x
         return part, np.zeros_like(part), fps
 
-    def test_a_ring_of_a_third_of_a_pixel_gives_the_frequency_alone(self):
-        part, fixed, fps = self.film(30)
+    def test_a_ring_of_a_third_of_a_pixel_gives_its_damping_from_a_fit(self):
+        part, fixed, fps = self.film(30, seconds=60.0)
         x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, fixed, fps)
         self.assertAlmostEqual(fd, 3.7 * np.sqrt(1 - 0.02 ** 2), delta=0.01 * 3.7)
+        self.assertAlmostEqual(zeta, 0.02, delta=0.15 * 0.02)  # the gate's own bar, from the simulated rings
+        self.assertEqual(len(peaks), 0)
+        note = [w for w in warnings if w.code == "damping-fit"][0]
+        self.assertEqual(note.values["why"], "below-floor")  # a page words it by its code and values
+        self.assertGreaterEqual(note.values["d"], free_decay.FIT_D)
+        self.assertFalse([w for w in warnings if w.code == "damping-changes"])  # one clean ring: one damping
+
+    def test_under_the_gate_the_frequency_alone(self):
+        part, fixed, fps = self.film(30, seconds=60.0)
+        kept, free_decay.FIT_D = free_decay.FIT_D, 1e9
+        try:
+            x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, fixed, fps)
+        finally:
+            free_decay.FIT_D = kept
         self.assertTrue(np.isnan(zeta) and np.isnan(dec) and len(peaks) == 0)
         note = [w for w in warnings if w.code == "frequency-only"][0]
-        self.assertEqual(note.values["why"], "below-floor")  # a page words it by its code and values
         self.assertGreaterEqual(note.values["ratio"], free_decay.FAINT_RATIO)
+
+    def test_a_damping_that_changes_as_the_swing_dies_away_is_flagged(self):
+        fps, hz = 25.0, 3.7
+        t = np.arange(int(60 * fps)) / fps - 5.0
+        on = t >= 0
+        rate = np.where(t < 3.0, 0.04, 0.01) * 2 * np.pi * hz  # a bolted joint: well damped while it swings large
+        envelope = np.exp(-np.cumsum(np.where(on, rate, 0.0)) / fps)
+        x = 0.01 * np.random.default_rng(3).normal(0, 1, len(t))
+        x[on] += 0.6 * envelope[on] * np.sin(2 * np.pi * hz * t[on])
+        part = np.zeros((len(x), 2))
+        part[:, 0] = x
+        x, noise, floor, (fd, fn, zeta, dec, peaks, warnings) = free_decay.read(part, np.zeros_like(part), fps)
+        changes = [w for w in warnings if w.code == "damping-changes"]
+        self.assertTrue(changes)
+        self.assertGreater(changes[0].values["z1"], changes[0].values["z2"])
 
     def test_noise_alone_under_a_pixel_is_still_refused(self):
         part, fixed, fps = self.film(0)
