@@ -172,14 +172,14 @@ over three pyramid levels), and when the first and second halves of the peaks gi
 apart and further than three times their combined standard error (two resonances, or a part that is not one linear
 resonance; neighbouring peaks share troughs, so the standard errors alone come out too small).
 
-It also prints the signal-to-noise ratio: the first swing over the swing's noise, what is left of the stretch read once
-the ring read is taken off (or, for the frequency alone, the noise of the quiet end), and from it the best precision
-noise alone allows, the Cramér-Rao bound for a decaying sine in white noise. With d = (first swing ÷ noise) ×
-√(frame rate ÷ (8π × damping ratio × natural frequency)), that bound is about 2 × damping ratio ÷ d in the frequency
+It also prints the signal-to-noise ratio: the first swing over the swing's noise, what is left of the stretch read
+once the ring read is taken off (or, for the frequency alone, the noise of the quiet end), and from it the best
+precision noise alone allows, the Cramér-Rao bound for a decaying sine in white noise. With d = (first swing ÷ noise)
+× √(frame rate ÷ (8π × damping ratio × natural frequency)), that bound is about 2 × damping ratio ÷ d in the frequency
 and 2 ÷ d in the damping ratio, as fractions (checked numerically against the bound to within 1-4 %). It is a bound,
-not this script's precision: the script reads the peaks and a windowed spectrum, which in simulation scattered 2-4
-times more than the bound in frequency and 3-8 times more in damping, and real readings add the clock, the tracker's
-bias below a pixel, and a part whose frequency shifts as it rings down.
+not this script's precision: the script reads the peaks and a windowed spectrum, which in three simulated cases
+scattered about 2 times more than the bound in frequency and 2.5-4 times more in damping, and real readings add the
+clock, the tracker's bias below a pixel, and a part whose frequency shifts as it rings down.
 
 What the scripts gave, on an Apple M3 laptop, 21-22 November 2026, in two installs: Python 3.13 with OpenCV 5.0,
 NumPy 1.26 and SciPy 1.17 from conda, and Python 3.15 with OpenCV 5.1, NumPy 2.5 and SciPy 1.18 from
