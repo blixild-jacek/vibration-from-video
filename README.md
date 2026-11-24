@@ -33,17 +33,34 @@ and the damping ratio follows:
     δ = ln(one upper peak ÷ the next)
     damping ratio = δ ÷ √(4π² + δ²)
 
-**Below a pixel, the frequency alone.** When the swing is too small for the damping ratio, the script takes its slow
+**Below a pixel, the frequency from the spectrum.** When the swing is too small for the damping ratio peak by peak,
+the script takes its slow
 drift off (a high-pass at 0.5 Hz) and compares the spectrum of the stretch just after the tap with three stretches of
 the same length at the video's end, where the part has stopped, and up to three before the tap. If the ring's peak
 stands at least 5 times above the highest of theirs, and 5 times above its own spectrum's median, it gives the
-frequency and no damping ratio. `faint_noise.py` checks both bars on simulated swings in half a minute:
+frequency. `faint_noise.py` checks both bars on simulated swings in half a minute:
 - steady tracker noise with a slow drift of up to 30 times its size never passed the first bar (2.64 at most in 30,000
   swings);
 - noise that is not steady never passed both (200 swings each at 25, 60 and 240 frames a second): the last 3 s one
   repeated frame, the last 6 s ten times quieter, noise five times larger for 4 s, a 3-frame blip;
 - a ring whose first swing is ten times the noise was found in 66-79 % of cases (3 to 47 Hz), twenty times in
   90-100 %, its frequency within 1.5 % in nine cases of ten.
+
+**Below a pixel, the damping ratio from a fit.** Then, when the ring stands well out of the noise, the damping ratio
+too: a decaying wave fitted by least squares to every frame of the swing, band-passed around that frequency, from just
+after the tap until the ring meets the noise. It is read when the ring-down's d (the signal-to-noise figure the script
+prints) is 30 or more, below which the frequency alone; and the stretch's two halves are fitted apart, with a warning
+when they differ by more than their scatter allows, as a structure's damping can change as its swing dies away.
+`faint_noise.py --damping` fixed both bars on simulated rings alone (4,787 rings, 3 to 90 Hz at 25 to 240 frames a
+second, damping 0.5 to 5 %): from d 30, 95 % of readings within 15 % of the damping ratio set; false alarms of the
+halves 1.5 %. Tried blind on four unseen CAMELOT roving-hammer videos (2Y and 6Y on the bare and the braced frame,
+first swings 0.30-0.46 px), with the rule frozen and the predictions written first: all four within 2-9 % of each
+strike's own third-floor accelerometer, fitted the same way over the same seconds; three warned that the damping fell
+as the swing died away, which the accelerometer shows too, and one such change went unflagged. Video 1 of the
+benchmark reads 2.24 % against the accelerometer's 2.18 % over the same 11.6 s. On the generated test clip, whose
+blocky texture is shifted by bilinear interpolation, the tracker under-reads swings of a tenth of a pixel by about 40 %,
+so a fit there reads the damping ratio high (0.027-0.030 for 0.02); a camera's optically blurred picture did not show
+this in the blind test, but a sharp synthetic texture is a hard case for any reading below a pixel.
 
 Anything that rings after the largest jolt is read, the camera included: a bump of the tripod near the end was taken
 for the ring (42 % of cases at 60 frames a second, all at 240). So keep the camera untouched until the reading's end,
@@ -216,11 +233,12 @@ requirements.txt:
   its outline instead (`--outline`). Plain or shiny surfaces, glare, motion blur and flickering light are not covered
   by the tests. The tap test has read six real videos, of a frame
   struck with a hammer in the CAMELOT benchmark (Politecnico di Torino, https://doi.org/10.5281/zenodo.15119038,
-  CC BY 4.0), with accelerometers on the frame. It moved under a pixel, so no damping ratio. Read up to 32 s, before
-  someone walks past the still point, four videos gave the frequency alone within 0.4-1.4 % of the accelerometer over
+  CC BY 4.0), with accelerometers on the frame. It moved under a pixel, too little for the damping ratio peak by peak
+  (it is read below a pixel by a fit since; see above). Read up to 32 s, before
+  someone walks past the still point, four videos gave the frequency within 0.4-1.4 % of the accelerometer over
   the same seconds, their ring 37-70 times the noise; the other two, at 3.8 and 2.0 times, were declined. Four more
   videos of the same frame, unopened until the rule was frozen and the predictions written, all gave the frequency
-  alone within 1.2 % of the accelerometer over the same seconds, compared as displacement. The speed test read
+  within 1.2 % of the accelerometer over the same seconds, compared as displacement. The speed test read
   six run-ups of a real rotor (Kang et al. 2024, Mendeley Data, https://doi.org/10.17632/47y7rwc2yg.1, CC BY 4.0)
   filmed from about 2 m, whose critical speed the shaft's eddy-current probe puts at 35.4-35.8 Hz. Points chosen on
   texture swung 0.1-0.2 px and were declined: their squares held the disk's face and the coupling's key, which turn

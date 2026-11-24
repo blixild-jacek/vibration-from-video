@@ -655,7 +655,8 @@ def faint_damping(x, fps, hz, start, end, noise):
     hz (FIT_BAND): first over faint()'s stretch x[start:end], then from start until that fit's envelope falls to
     FIT_ABOVE times the band's noise (at least FIT_CYCLES cycles), so that all of the ring that stands out is used, as
     the peaks above the floor are.
-    Returns (zeta, its ring-down's d, halves, the fit's relative standard error of the decay, the seconds fitted), where
+    Returns (zeta, its ring-down's d, halves, the fit's relative standard error of the decay, the seconds fitted, and
+    the fitted envelope's (amplitude px, decay 1/s) from start, for a chart), where
     halves is (zeta of the first half of those seconds, of the second, whether they differ by more than FIT_HALVES
     times their combined standard error and by more than its share of their mean, and those two figures), or None
     when a half does not fit; None when the fit fails
@@ -692,7 +693,7 @@ def faint_damping(x, fps, hz, start, end, noise):
         z1, z2 = to_zeta(s1, parts[0][0][2]), to_zeta(s2, parts[1][0][2])
         sigmas, share = abs(s1 - s2) / np.hypot(e1, e2), abs(z1 - z2) / ((z1 + z2) / 2)
         halves = (z1, z2, bool(sigmas > FIT_HALVES[0] and share > FIT_HALVES[1]), sigmas, share)
-    return zeta, d, halves, float(widen * np.sqrt(cov[1, 1]) / decay), (stop - start) / fps
+    return zeta, d, halves, float(widen * np.sqrt(cov[1, 1]) / decay), (stop - start) / fps, (float(a), float(decay))
 
 
 def passes(found, fps):
@@ -797,12 +798,14 @@ def read(part, fixed, fps, min_peak=None):
         quiet = noise_in(drift_off(x, fps)[len(x) - FAINT_QUIET * (end - start):])
         fit = faint_damping(x, fps, fd, start, end, quiet)
         if fit and fit[1] >= FIT_D:  # the damping ratio from a decaying wave fitted to the ring
-            zeta, d, halves, _, fitted = fit
+            zeta, d, halves, _, fitted, (amp, rate) = fit
             decrement = 2 * np.pi * zeta / np.sqrt(1 - zeta ** 2)
-            notes = [Note("damping-fit", f"{SMALL[why].format(floor=floor)}, too few for the damping ratio peak by peak, "
-                          f"so it is read from a decaying wave fitted to every frame of the {fitted:.1f} s after the "
-                          f"strike, where the ring stands out of the noise (its ring-down's d is {d:.0f}, where {FIT_D:g} "
-                          "is needed)", why=why, floor=floor, seconds=fitted, d=d, needed=FIT_D, start=start, end=end)]
+            from_s, to_s = start / fps, start / fps + fitted  # seconds into the frames read, as a chart's axis
+            notes = [Note("damping-fit", f"{SMALL[why].format(floor=floor)}, so the damping ratio is read not peak by "
+                          f"peak but from a decaying wave fitted to every frame from {from_s:.1f} to {to_s:.1f} s, the "
+                          f"{fitted:.1f} s after the strike where the ring stands out of the noise (its ring-down's d is "
+                          f"{d:.0f}, where {FIT_D:g} is needed)", why=why, floor=floor, seconds=fitted, d=d,
+                          needed=FIT_D, start=start, end=end, from_s=from_s, to_s=to_s, amp=amp, decay=rate)]
             if halves and halves[2]:
                 notes.append(Note("damping-changes", f"the first and second halves of those {fitted:.1f} s give damping "
                                   f"ratios of {halves[0]:.4f} and {halves[1]:.4f}, further apart than their scatter "
@@ -916,8 +919,8 @@ def main():
           f"{snr['noise']:.3f} px" + (f"; noise alone allows at best +-{100 * snr['frequency']:.2g} % in the "
                                       f"frequency and +-{100 * snr['damping']:.2g} % in the damping ratio"
                                       if "d" in snr else ""))
-    for w in warnings:
-        print(f"warning: {w}")
+    for w in warnings:  # how the damping ratio was read below the floor is a reading's note, not a warning
+        print(f"{w}" if getattr(w, "code", "") == "damping-fit" else f"warning: {w}")
     if args.plot:
         import matplotlib
         matplotlib.use("Agg")
